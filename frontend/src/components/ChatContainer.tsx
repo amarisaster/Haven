@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Message } from '../lib/types';
 import { getMessages, sendChat, getCompanionStatus } from '../lib/api';
+import { notifyCompanionMessage } from '../lib/notifications';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ModelSelector from './ModelSelector';
@@ -148,6 +149,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, companionMsg]);
+      notifyCompanionMessage(companionName, fullContent);
     }
   }, [threadId, selectedModel, selectedProvider, onThreadCreated]);
 
@@ -202,6 +204,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, companionMsg]);
+      notifyCompanionMessage(companionName, fullContent);
     }
   }, [messages, threadId, selectedModel, selectedProvider]);
 
