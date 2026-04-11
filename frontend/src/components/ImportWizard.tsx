@@ -12,7 +12,7 @@ interface ImportWizardProps {
   onComplete: (threadCount: number) => void;
 }
 
-const API = import.meta.env.VITE_API_URL || '';
+const API = localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
 
 export default function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
   const [step, setStep] = useState<'upload' | 'preview' | 'importing' | 'done'>('upload');

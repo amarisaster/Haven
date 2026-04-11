@@ -234,6 +234,33 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
       <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--haven-text)', marginBottom: '20px' }}>Settings</h1>
 
+      {/* Backend URL */}
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>Backend</h3>
+        <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginBottom: '12px' }}>
+          Your Haven Worker URL. Leave empty if using the same origin.
+        </p>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <input
+            type="text"
+            placeholder="https://your-haven-worker.workers.dev"
+            value={localStorage.getItem('haven-api-url') || ''}
+            onChange={(e) => {
+              const val = e.target.value.trim();
+              if (val) localStorage.setItem('haven-api-url', val);
+              else localStorage.removeItem('haven-api-url');
+            }}
+            style={inputStyle}
+          />
+          <button
+            onClick={() => window.location.reload()}
+            style={{ ...btnStyle, whiteSpace: 'nowrap' }}
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+
       {/* Companion */}
       <div style={sectionStyle}>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '16px' }}>Companion</h3>

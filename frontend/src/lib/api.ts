@@ -4,7 +4,7 @@
 
 import type { Thread, Message, Companion, Identity, ModelInfo } from './types';
 
-const API = import.meta.env.VITE_API_URL || '';
+const API = localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`);
@@ -60,6 +60,10 @@ export const getModels = () => get<ModelInfo[]>('/api/models');
 // Settings
 export const getSettings = () => get<Record<string, string>>('/api/settings');
 export const updateSettings = (data: Record<string, string>) => put('/api/settings', data);
+
+// Status
+export const getCompanionStatus = () => get<{ custom_status: string | null; presence: string }>('/api/status');
+export const setCompanionStatus = (data: { custom_status?: string; presence?: string }) => put('/api/status', data);
 
 // File upload
 export async function uploadFile(file: File): Promise<{ key: string; url: string }> {

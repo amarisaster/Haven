@@ -5,8 +5,7 @@ const config: CapacitorConfig = {
   appName: 'Haven',
   webDir: 'dist',
   server: {
-    url: 'https://haven-kb6.pages.dev',
-    allowNavigation: ['*.supabase.co', '*.workers.dev', '*.example.workers.dev', 'haven-kb6.pages.dev'],
+    allowNavigation: ['*'],
   },
   android: {
     allowMixedContent: true,
