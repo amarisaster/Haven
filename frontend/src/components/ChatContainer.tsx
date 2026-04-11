@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Message } from '../lib/types';
 import { getMessages, sendChat, getCompanionStatus } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
+import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ModelSelector from './ModelSelector';
@@ -16,7 +17,6 @@ interface ChatContainerProps {
 }
 
 const LS_FONT = 'haven-font-size';
-const LS_WALLPAPER = 'haven-wallpaper';
 const LS_MODEL = 'haven-model';
 const LS_PROVIDER = 'haven-provider';
 
@@ -29,7 +29,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     const saved = localStorage.getItem(LS_FONT);
     return saved ? parseInt(saved, 10) : 15;
   });
-  const [wallpaper, setWallpaper] = useState(() => localStorage.getItem(LS_WALLPAPER) || '');
+  const [wallpaper, setWallpaper] = useState('');
   const fontFamily = localStorage.getItem('haven-font-family') || undefined;
   const textColor = localStorage.getItem('haven-text-color') || undefined;
   const [showMenu, setShowMenu] = useState(false);
@@ -68,7 +68,9 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
 
   // Persist settings
   useEffect(() => { localStorage.setItem(LS_FONT, String(fontSize)); }, [fontSize]);
-  useEffect(() => { localStorage.setItem(LS_WALLPAPER, wallpaper); }, [wallpaper]);
+  // Load wallpaper from IndexedDB per thread
+  const wpKey = threadId ? `wp-${threadId}` : 'wp-default';
+  useEffect(() => { loadWallpaper(wpKey).then(setWallpaper); }, [wpKey]);
   useEffect(() => { localStorage.setItem(LS_MODEL, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(LS_PROVIDER, selectedProvider); }, [selectedProvider]);
 
@@ -429,7 +431,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       {showWallpaper && (
         <WallpaperPicker
           current={wallpaper}
-          onSelect={setWallpaper}
+          onSelect={(wp: string) => { setWallpaper(wp); saveWallpaper(wpKey, wp); }}
           onClose={() => setShowWallpaper(false)}
         />
       )}
