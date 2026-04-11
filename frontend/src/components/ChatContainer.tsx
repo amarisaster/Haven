@@ -272,7 +272,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               const color = colors[p] || colors.online;
               const text = companionStatus.custom_status || p;
               return (
-                <div style={{ fontSize: '10px', color, display: 'flex', alignItems: 'center', gap: '3px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: '10px', color: 'var(--haven-text-secondary)', display: 'flex', alignItems: 'center', gap: '3px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
                   {text}
                 </div>
