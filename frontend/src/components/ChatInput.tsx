@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import GifPicker from './GifPicker';
 import { uploadFile } from '../lib/api';
+import { extractFileText, isExtractableFile, type ExtractedFile } from '../lib/file-extract';
 
 interface ChatInputProps {
-  onSend: (message: string, image?: string) => void;
+  onSend: (message: string, image?: string, fileContext?: string) => void;
   disabled: boolean;
   placeholder?: string;
 }
@@ -16,6 +17,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<ExtractedFile | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -31,6 +33,21 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
       };
       reader.readAsDataURL(file);
       if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
+
+    // Text/PDF/code files: extract content for model context
+    if (isExtractableFile(file)) {
+      setUploading(true);
+      try {
+        const extracted = await extractFileText(file);
+        if (extracted) setPendingFile(extracted);
+      } catch (err) {
+        console.error('File extraction failed:', err);
+      } finally {
+        setUploading(false);
+        if (fileRef.current) fileRef.current.value = '';
+      }
       return;
     }
 
@@ -52,11 +69,17 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
 
   const handleSend = () => {
     const trimmed = text.trim();
-    if (!trimmed && !pendingImage) return;
+    if (!trimmed && !pendingImage && !pendingFile) return;
     if (disabled) return;
-    onSend(trimmed || '(image)', pendingImage || undefined);
+
+    const fileContext = pendingFile
+      ? `<file name="${pendingFile.filename}"${pendingFile.pageCount ? ` pages="${pendingFile.pageCount}"` : ''}>\n${pendingFile.text}\n</file>`
+      : undefined;
+
+    onSend(trimmed || (pendingImage ? '(image)' : `(file: ${pendingFile?.filename})`), pendingImage || undefined, fileContext);
     setText('');
     setPendingImage(null);
+    setPendingFile(null);
     setShowGif(false);
     inputRef.current?.focus();
   };
@@ -149,6 +172,24 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
               fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >x</button>
+        </div>
+      )}
+
+      {/* Pending file preview */}
+      {pendingFile && (
+        <div style={{ marginBottom: '8px', display: 'inline-flex', alignItems: 'center', gap: '8px',
+          background: 'var(--haven-card)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '8px 12px' }}>
+          <span style={{ fontSize: '14px' }}>📄</span>
+          <div>
+            <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--haven-text)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pendingFile.filename}</div>
+            <div style={{ fontSize: '10px', color: 'var(--haven-text-muted)' }}>
+              {pendingFile.pageCount ? `${pendingFile.pageCount} pages · ` : ''}{Math.round(pendingFile.text.length / 1000)}k chars
+            </div>
+          </div>
+          <button onClick={() => setPendingFile(null)} style={{
+            width: '18px', height: '18px', borderRadius: '50%', background: '#ef4444', color: 'white',
+            border: 'none', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>x</button>
         </div>
       )}
 

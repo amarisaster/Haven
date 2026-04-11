@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.2.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.3.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -70,6 +70,10 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - **Conversation threads** — start new ones anytime, pick up old ones where you left off
 - **Companion identity** — who they are loads on every conversation. Personality, voice, values, boundaries. You bring the character, Haven keeps it consistent
 - Full **export and backup** of everything — threads, messages, identity. Your data, portable, always
+
+### See and read
+- **Image vision** — attach an image and the model sees it. Works with GPT-4o, Claude, and any vision-capable model
+- **File reading** — attach PDFs, text files, or code and the model reads the content. 30+ supported file types
 
 ### Feel real
 - **Custom TTS voices** — pick from your system voices, or connect ElevenLabs for a cloned voice that actually sounds like them
@@ -236,6 +240,14 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 ---
 
 ## Recent updates
+
+**v1.3** — Image Vision, File Reading, Per-Thread Wallpapers
+
+- **Image vision** — attach an image and vision-capable models (GPT-4o, Claude, etc.) see and describe it. Preview before sending.
+- **File reading** — attach PDFs (up to 30 pages), text files, code files, and the model reads the content. Supports .pdf, .txt, .md, .json, .py, .ts, .js, .csv, and 20+ more formats.
+- **Per-thread wallpapers** — each conversation gets its own wallpaper, stored in IndexedDB (no localStorage overflow)
+- **User profile** — set your display name, avatar (tap-to-upload), and status in Settings. Shows in chat header alongside companion.
+- **Push notifications** — local notifications when companion responds while app is in background (Android)
 
 **v1.2** — Android App, Font Picker, Text Colors
 

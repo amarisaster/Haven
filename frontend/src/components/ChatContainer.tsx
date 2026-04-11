@@ -79,7 +79,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     setSelectedProvider(provider);
   };
 
-  const handleSend = useCallback(async (content: string, image?: string) => {
+  const handleSend = useCallback(async (content: string, image?: string, fileContext?: string) => {
     setError(null);
     setShowMenu(false);
 
@@ -99,7 +99,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let responseModel = '';
 
     try {
-      for await (const event of sendChat(content, threadId, selectedModel, selectedProvider, image)) {
+      const messageWithFile = fileContext ? `${content}\n\n${fileContext}` : content;
+      for await (const event of sendChat(messageWithFile, threadId, selectedModel, selectedProvider, image)) {
         switch (event.type) {
           case 'thread':
             if (event.threadId && !currentThreadId) {
