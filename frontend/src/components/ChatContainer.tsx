@@ -251,35 +251,36 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             </svg>
           </button>
         )}
-        {/* Avatar + name */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-          {companionAvatar ? (
-            <img src={companionAvatar} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-          ) : (
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
-              background: 'var(--haven-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'white', fontSize: '14px', fontWeight: 600,
-            }}>
-              {companionName.charAt(0)}
-            </div>
-          )}
+        {/* Companion (left) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            {companionAvatar ? (
+              <img src={companionAvatar} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+            ) : (
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%',
+                background: 'var(--haven-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'white', fontSize: '14px', fontWeight: 600,
+              }}>
+                {companionName.charAt(0)}
+              </div>
+            )}
+            <span style={{
+              position: 'absolute', bottom: 0, right: 0, width: '8px', height: '8px', borderRadius: '50%',
+              background: { online: '#4ade80', idle: '#facc15', dnd: '#f87171', offline: '#6b7280' }[companionStatus.presence || 'online'] || '#4ade80',
+              border: '2px solid var(--haven-surface)',
+            }} />
+          </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{companionName}</div>
-            {(() => {
-              const p = companionStatus.presence || 'online';
-              const colors: Record<string, string> = { online: '#4ade80', idle: '#facc15', dnd: '#f87171', offline: '#6b7280' };
-              const color = colors[p] || colors.online;
-              const text = companionStatus.custom_status || p;
-              return (
-                <div style={{ fontSize: '10px', color: 'var(--haven-text-secondary)', display: 'flex', alignItems: 'center', gap: '3px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
-                  {text}
-                </div>
-              );
-            })()}
+            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{companionName}</div>
+            <div style={{ fontSize: '9px', color: 'var(--haven-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>
+              {companionStatus.custom_status || companionStatus.presence || 'online'}
+            </div>
           </div>
         </div>
+
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
 
         <ModelSelector
           selectedModel={selectedModel}
@@ -346,6 +347,35 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               </button>
             </div>
           )}
+        </div>
+
+        {/* User (right) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+          <div style={{ minWidth: 0, textAlign: 'right' }}>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {localStorage.getItem('haven-user-name') || 'You'}
+            </div>
+            <div style={{ fontSize: '9px', color: 'var(--haven-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>
+              {localStorage.getItem('haven-user-status') || 'online'}
+            </div>
+          </div>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            {localStorage.getItem('haven-user-avatar') ? (
+              <img src={localStorage.getItem('haven-user-avatar')!} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+            ) : (
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%',
+                background: 'var(--haven-card)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'var(--haven-text-secondary)', fontSize: '14px', fontWeight: 600,
+              }}>
+                {(localStorage.getItem('haven-user-name') || 'Y').charAt(0)}
+              </div>
+            )}
+            <span style={{
+              position: 'absolute', bottom: 0, right: 0, width: '8px', height: '8px', borderRadius: '50%',
+              background: '#4ade80', border: '2px solid var(--haven-surface)',
+            }} />
+          </div>
         </div>
       </div>
 

@@ -285,10 +285,39 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         </div>
       </div>
 
-      {/* Your Status */}
+      {/* Your Profile & Status */}
       <div style={sectionStyle}>
-        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>Your Status</h3>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>You</h3>
         <div style={{ marginBottom: '12px' }}>
+          <label style={labelStyle}>Display Name</label>
+          <input
+            type="text"
+            placeholder="Your name"
+            defaultValue={localStorage.getItem('haven-user-name') || ''}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              if (val) localStorage.setItem('haven-user-name', val);
+              else localStorage.removeItem('haven-user-name');
+            }}
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ marginBottom: '12px' }}>
+          <label style={labelStyle}>Avatar URL</label>
+          <input
+            type="text"
+            placeholder="https://... or leave blank"
+            defaultValue={localStorage.getItem('haven-user-avatar') || ''}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              if (val) localStorage.setItem('haven-user-avatar', val);
+              else localStorage.removeItem('haven-user-avatar');
+            }}
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ marginBottom: '12px' }}>
+          <label style={labelStyle}>Status</label>
           <input
             type="text"
             placeholder="What's on your mind?"
