@@ -423,6 +423,48 @@ export default {
         return json({ success: true });
       }
 
+      // ---- Status ----
+      if (path === '/api/status' && request.method === 'GET') {
+        const statusRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('companion_status').first<{ value: string }>();
+        const presenceRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('companion_presence').first<{ value: string }>();
+        return json({
+          custom_status: statusRow?.value || null,
+          presence: presenceRow?.value || 'online',
+        });
+      }
+
+      if (path === '/api/status' && request.method === 'PUT') {
+        const body = await request.json() as { custom_status?: string; presence?: string };
+        if (body.custom_status !== undefined) {
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_status', body.custom_status).run();
+        }
+        if (body.presence) {
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_presence', body.presence).run();
+        }
+        return json({ success: true });
+      }
+
+      // ---- User Status ----
+      if (path === '/api/user-status' && request.method === 'GET') {
+        const statusRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('user_status').first<{ value: string }>();
+        const presenceRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('user_presence').first<{ value: string }>();
+        return json({
+          custom_status: statusRow?.value || null,
+          presence: presenceRow?.value || 'online',
+        });
+      }
+
+      if (path === '/api/user-status' && request.method === 'PUT') {
+        const body = await request.json() as { custom_status?: string; presence?: string };
+        if (body.custom_status !== undefined) {
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('user_status', body.custom_status).run();
+        }
+        if (body.presence) {
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('user_presence', body.presence).run();
+        }
+        return json({ success: true });
+      }
+
       // ---- Models ----
       if (path === '/api/models' && request.method === 'GET') {
         const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number }> = [];

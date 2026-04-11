@@ -65,6 +65,10 @@ export const updateSettings = (data: Record<string, string>) => put('/api/settin
 export const getCompanionStatus = () => get<{ custom_status: string | null; presence: string }>('/api/status');
 export const setCompanionStatus = (data: { custom_status?: string; presence?: string }) => put('/api/status', data);
 
+// User Status
+export const getUserStatus = () => get<{ custom_status: string | null; presence: string }>('/api/user-status');
+export const setUserStatus = (data: { custom_status?: string; presence?: string }) => put<{ success: boolean }>('/api/user-status', data);
+
 // File upload
 export async function uploadFile(file: File): Promise<{ key: string; url: string }> {
   const form = new FormData();

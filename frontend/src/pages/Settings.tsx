@@ -4,7 +4,7 @@ import {
   getCompanion, updateCompanion,
   getSettings, updateSettings,
   getIdentity, addIdentity, deleteIdentity,
-  uploadFile,
+  uploadFile, getUserStatus, setUserStatus,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -36,6 +36,12 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [fontFamily, setFontFamily] = useState(() => localStorage.getItem('haven-font-family') || 'System');
   const [textColor, setTextColor] = useState(() => localStorage.getItem('haven-text-color') || '');
+
+  // User status
+  const [userStatusText, setUserStatusText] = useState('');
+  const [userPresence, setUserPresence] = useState('online');
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
 
   // Voice / TTS
   const [ttsMode, setTtsMode] = useState<'browser' | 'elevenlabs'>(() => getTTSSettings().mode);
@@ -87,7 +93,23 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
     }).catch(() => {});
 
     loadIdentities();
+
+    getUserStatus().then((s) => {
+      setUserStatusText(s.custom_status || '');
+      setUserPresence(s.presence || 'online');
+    }).catch(() => {});
   }, []);
+
+  const saveUserStatus = async () => {
+    setStatusSaving(true);
+    setStatusMsg('');
+    try {
+      await setUserStatus({ custom_status: userStatusText, presence: userPresence });
+      setStatusMsg('Saved');
+      setTimeout(() => setStatusMsg(''), 2000);
+    } catch { setStatusMsg('Error'); }
+    setStatusSaving(false);
+  };
 
   const loadIdentities = () => {
     setIdLoading(true);
@@ -260,6 +282,52 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           >
             Apply
           </button>
+        </div>
+      </div>
+
+      {/* Your Status */}
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>Your Status</h3>
+        <div style={{ marginBottom: '12px' }}>
+          <input
+            type="text"
+            placeholder="What's on your mind?"
+            value={userStatusText}
+            onChange={(e) => setUserStatusText(e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+        <div style={{ marginBottom: '12px' }}>
+          <label style={labelStyle}>Presence</label>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            {[
+              { label: 'Online', value: 'online', color: '#4ade80' },
+              { label: 'Idle', value: 'idle', color: '#facc15' },
+              { label: 'DND', value: 'dnd', color: '#f87171' },
+              { label: 'Offline', value: 'offline', color: '#6b7280' },
+            ].map((p) => (
+              <button
+                key={p.value}
+                onClick={() => setUserPresence(p.value)}
+                style={{
+                  flex: 1, padding: '6px', borderRadius: '8px', fontSize: '11px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                  background: userPresence === p.value ? 'var(--haven-card)' : 'transparent',
+                  color: userPresence === p.value ? 'var(--haven-text)' : 'var(--haven-text-muted)',
+                  border: `1px solid ${userPresence === p.value ? p.color : 'var(--haven-border)'}`,
+                }}
+              >
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: p.color }} />
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button onClick={saveUserStatus} disabled={statusSaving} style={btnStyle}>
+            {statusSaving ? 'Saving...' : 'Save'}
+          </button>
+          {statusMsg && <span style={{ fontSize: '12px', color: statusMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{statusMsg}</span>}
         </div>
       </div>
 
