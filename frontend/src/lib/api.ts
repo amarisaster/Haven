@@ -92,11 +92,12 @@ export async function* sendChat(
   threadId: string | null,
   model: string,
   provider: string,
+  image?: string,
 ): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string }> {
   const res = await fetch(`${API}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, threadId, model, provider }),
+    body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}) }),
   });
 
   if (!res.ok || !res.body) throw new Error(`Chat failed: ${res.status}`);

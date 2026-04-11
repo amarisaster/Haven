@@ -3,7 +3,7 @@ import GifPicker from './GifPicker';
 import { uploadFile } from '../lib/api';
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, image?: string) => void;
   disabled: boolean;
   placeholder?: string;
 }
@@ -15,13 +15,30 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Images: convert to base64 for vision
+    if (file.type.startsWith('image/')) {
+      setUploading(true);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPendingImage(reader.result as string);
+        setUploading(false);
+      };
+      reader.readAsDataURL(file);
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
+
+    // Other files: upload to R2 as before
     setUploading(true);
     try {
       const result = await uploadFile(file);
-      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const apiUrl = localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
       onSend(`${apiUrl}${result.url}`);
     } catch (err) {
       console.error('Upload failed:', err);
@@ -35,9 +52,11 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
 
   const handleSend = () => {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
+    if (!trimmed && !pendingImage) return;
+    if (disabled) return;
+    onSend(trimmed || '(image)', pendingImage || undefined);
     setText('');
+    setPendingImage(null);
     setShowGif(false);
     inputRef.current?.focus();
   };
@@ -117,6 +136,21 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     <div style={{ position: 'relative', padding: '8px 12px 12px', background: 'var(--haven-bg)' }}>
       {/* GIF picker above */}
       {showGif && <GifPicker onSelect={handleGifSelect} onClose={() => setShowGif(false)} />}
+
+      {/* Pending image preview */}
+      {pendingImage && (
+        <div style={{ marginBottom: '8px', position: 'relative', display: 'inline-block' }}>
+          <img src={pendingImage} alt="Attached" style={{ maxHeight: '120px', borderRadius: '8px', border: '1px solid var(--haven-border)' }} />
+          <button
+            onClick={() => setPendingImage(null)}
+            style={{
+              position: 'absolute', top: '-6px', right: '-6px', width: '20px', height: '20px',
+              borderRadius: '50%', background: '#ef4444', color: 'white', border: 'none',
+              fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >x</button>
+        </div>
+      )}
 
       <div style={{
         display: 'flex', alignItems: 'flex-end', gap: '4px',

@@ -96,7 +96,7 @@ async function getSettingValue(db: D1Database, key: string): Promise<string | nu
 }
 
 async function* streamInference(
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content: any }>,
   model: string,
   provider: string,
   env: Env,
@@ -226,7 +226,7 @@ export default {
       // ---- Chat (SSE streaming) ----
       if (path === '/api/chat' && request.method === 'POST') {
         const body = await request.json() as any;
-        const { message, threadId, model = 'stepfun/step-3.5-flash:free', provider = 'openrouter' } = body;
+        const { message, threadId, model = 'stepfun/step-3.5-flash:free', provider = 'openrouter', image } = body;
 
         if (!message) return json({ error: 'message required' }, 400);
 
@@ -254,12 +254,25 @@ export default {
         const systemPrompt = await buildSystemPrompt(env.DB);
 
         // Assemble messages
+        const historyMessages = (history.results || []).map(m => ({
+          role: m.role === 'companion' ? 'assistant' : m.role,
+          content: m.content,
+        }));
+
+        // If the latest message has an image, make it multimodal (vision)
+        if (image && historyMessages.length > 0) {
+          const last = historyMessages[historyMessages.length - 1];
+          if (last.role === 'user') {
+            (last as any).content = [
+              { type: 'text', text: last.content },
+              { type: 'image_url', image_url: { url: image } },
+            ];
+          }
+        }
+
         const chatMessages = [
           { role: 'system', content: systemPrompt },
-          ...(history.results || []).map(m => ({
-            role: m.role === 'companion' ? 'assistant' : m.role,
-            content: m.content,
-          })),
+          ...historyMessages,
         ];
 
         // Stream response
