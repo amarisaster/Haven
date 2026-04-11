@@ -84,11 +84,19 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - **JSON character cards** work too (SillyTavern, TavernAI, Chub) — paste or upload, we'll parse it
 
 ### Make it yours
-- Adjustable font size for accessibility
+- **Font picker** — System, Serif, Mono, or **OpenDyslexic** for accessibility
+- **Text colors** — 6 presets (Warm, Cool, Rose, Mint, Lavender) + custom color picker
+- Adjustable font size
 - Companion avatar in chat
 - Model attribution on messages — always know which model is talking
 - Edit and regenerate messages
 - Dark, warm UI that feels like home
+
+### Android App
+- **Native Android APK** — download from [Releases](https://github.com/amarisaster/Haven/releases), install, done
+- Set your backend URL in Settings — no rebuild needed
+- Auto-updates when you redeploy your frontend
+- Companion status display in chat header
 
 ---
 
@@ -211,7 +219,7 @@ You can also paste or upload **JSON character cards** during setup. Haven parses
 Yes. Cloudflare's free tier handles Workers, D1, R2, and Pages for personal use. You only pay for your AI model's API usage.
 
 **Can I use this on my phone?**
-Yes. Haven is a Progressive Web App — it works in any mobile browser and you can add it to your home screen.
+Yes. Haven has a native **Android app** — download the APK from the [latest release](https://github.com/amarisaster/Haven/releases). It also works as a PWA in any mobile browser.
 
 **Is my data private?**
 Your data lives on your own Cloudflare account. Haven has no analytics, no tracking, no external calls except to your chosen AI provider.
@@ -228,6 +236,14 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 ---
 
 ## Recent updates
+
+**v1.2** — Android App, Font Picker, Text Colors
+
+- **Native Android app** — download APK from Releases, install, set your backend URL, done. Auto-updates on deploy.
+- **Font picker** — System, Serif, Mono, OpenDyslexic (dyslexia accessibility)
+- **Text color customization** — 6 presets + custom color picker for message text
+- **Companion status** — presence indicator + custom status text in chat header
+- **Configurable backend URL** — set your worker URL from within the app (Settings > Backend)
 
 **v1.1** — Multi-provider support & model selector upgrade
 
@@ -251,7 +267,8 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 - Local model support (Ollama local, llama.cpp)
 - Voice calls (real-time STT + TTS loop)
 - Presence detection — your companion knows when you're there
-- Mobile app wrapper
+- Push notifications
+- iOS app
 
 ---
 
