@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Message } from '../lib/types';
-import { getMessages, sendChat } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus } from '../lib/api';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ModelSelector from './ModelSelector';
@@ -29,10 +29,27 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     return saved ? parseInt(saved, 10) : 15;
   });
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem(LS_WALLPAPER) || '');
+  const fontFamily = localStorage.getItem('haven-font-family') || undefined;
+  const textColor = localStorage.getItem('haven-text-color') || undefined;
   const [showMenu, setShowMenu] = useState(false);
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
+
+  // Poll companion status
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const s = await getCompanionStatus();
+        if (active) setCompanionStatus(s);
+      } catch { /* silent */ }
+    };
+    poll();
+    const interval = setInterval(poll, 30000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
 
   // Load messages when thread changes
   useEffect(() => {
@@ -246,10 +263,18 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           )}
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{companionName}</div>
-            <div style={{ fontSize: '10px', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '3px' }}>
-              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#4ade80', display: 'inline-block' }} />
-              online
-            </div>
+            {(() => {
+              const p = companionStatus.presence || 'online';
+              const colors: Record<string, string> = { online: '#4ade80', idle: '#facc15', dnd: '#f87171', offline: '#6b7280' };
+              const color = colors[p] || colors.online;
+              const text = companionStatus.custom_status || p;
+              return (
+                <div style={{ fontSize: '10px', color, display: 'flex', alignItems: 'center', gap: '3px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
+                  {text}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
@@ -352,6 +377,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         messages={messages}
         streamingContent={streamingContent}
         fontSize={fontSize}
+        fontFamily={fontFamily}
+        textColor={textColor}
         wallpaper={wallpaper}
         companionAvatar={companionAvatar}
         onEditMessage={handleEditMessage}

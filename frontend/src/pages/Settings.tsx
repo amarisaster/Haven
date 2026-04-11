@@ -34,6 +34,8 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   });
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem('haven-wallpaper') || '');
   const [showWallpaper, setShowWallpaper] = useState(false);
+  const [fontFamily, setFontFamily] = useState(() => localStorage.getItem('haven-font-family') || 'System');
+  const [textColor, setTextColor] = useState(() => localStorage.getItem('haven-text-color') || '');
 
   // Voice / TTS
   const [ttsMode, setTtsMode] = useState<'browser' | 'elevenlabs'>(() => getTTSSettings().mode);
@@ -362,6 +364,60 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--haven-text-muted)' }}>
             <span>12px</span><span>24px</span>
+          </div>
+        </div>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={labelStyle}>Font</label>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {[
+              { label: 'System', value: 'System' },
+              { label: 'Serif', value: 'Georgia, serif' },
+              { label: 'Mono', value: 'ui-monospace, monospace' },
+              { label: 'Dyslexic', value: 'OpenDyslexic, sans-serif' },
+            ].map((f) => (
+              <button
+                key={f.label}
+                onClick={() => { setFontFamily(f.value); localStorage.setItem('haven-font-family', f.value); }}
+                style={{
+                  padding: '6px 12px', borderRadius: '8px', fontSize: '12px', cursor: 'pointer',
+                  fontFamily: f.value === 'System' ? 'inherit' : f.value,
+                  background: fontFamily === f.value ? 'var(--haven-accent)' : 'var(--haven-card)',
+                  color: fontFamily === f.value ? 'white' : 'var(--haven-text-secondary)',
+                  border: `1px solid ${fontFamily === f.value ? 'var(--haven-accent)' : 'var(--haven-border)'}`,
+                }}
+              >{f.label}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={labelStyle}>Text Color</label>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {[
+              { label: 'Default', value: '' },
+              { label: 'Warm', value: '#fde68a' },
+              { label: 'Cool', value: '#93c5fd' },
+              { label: 'Rose', value: '#fda4af' },
+              { label: 'Mint', value: '#6ee7b7' },
+              { label: 'Lavender', value: '#c4b5fd' },
+            ].map((c) => (
+              <button
+                key={c.label}
+                onClick={() => { setTextColor(c.value); localStorage.setItem('haven-text-color', c.value); }}
+                style={{
+                  padding: '6px 12px', borderRadius: '8px', fontSize: '12px', cursor: 'pointer',
+                  background: textColor === c.value ? (c.value || 'var(--haven-accent)') : 'var(--haven-card)',
+                  color: textColor === c.value ? (c.value ? '#000' : 'white') : (c.value || 'var(--haven-text-secondary)'),
+                  border: `1px solid ${textColor === c.value ? (c.value || 'var(--haven-accent)') : 'var(--haven-border)'}`,
+                }}
+              >{c.label}</button>
+            ))}
+            <input
+              type="color"
+              value={textColor || '#e7e5e4'}
+              onChange={(e) => { setTextColor(e.target.value); localStorage.setItem('haven-text-color', e.target.value); }}
+              style={{ width: '28px', height: '28px', border: 'none', background: 'transparent', cursor: 'pointer' }}
+              title="Custom color"
+            />
           </div>
         </div>
         <div>

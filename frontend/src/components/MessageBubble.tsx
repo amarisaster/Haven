@@ -6,6 +6,8 @@ interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
   fontSize?: number;
+  fontFamily?: string;
+  textColor?: string;
   companionAvatar?: string;
   onEdit?: (messageId: string, newContent: string) => void;
   onReact?: (messageId: string, emoji: string) => void;
@@ -77,7 +79,7 @@ function formatTimestamp(dateStr: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function MessageBubble({ message, isStreaming, fontSize = 15, companionAvatar, onEdit, onReact }: MessageBubbleProps) {
+export default function MessageBubble({ message, isStreaming, fontSize = 15, fontFamily, textColor, companionAvatar, onEdit, onReact }: MessageBubbleProps) {
   const [showActions, setShowActions] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
@@ -124,11 +126,12 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, com
         <div
           style={{
             background: isUser ? 'var(--haven-accent-soft)' : 'var(--haven-card)',
-            color: isUser ? '#1c1917' : 'var(--haven-text)',
+            color: textColor && !isUser ? textColor : isUser ? '#1c1917' : 'var(--haven-text)',
             borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
             borderLeft: isCompanion ? '3px solid var(--haven-accent)' : undefined,
             padding: media ? '4px' : '10px 14px',
             fontSize: `${fontSize}px`,
+            fontFamily: fontFamily && fontFamily !== 'System' ? fontFamily : undefined,
             lineHeight: '1.5',
             wordBreak: 'break-word',
             position: 'relative',
