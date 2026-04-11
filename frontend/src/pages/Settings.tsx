@@ -303,18 +303,37 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           />
         </div>
         <div style={{ marginBottom: '12px' }}>
-          <label style={labelStyle}>Avatar URL</label>
-          <input
-            type="text"
-            placeholder="https://... or leave blank"
-            defaultValue={localStorage.getItem('haven-user-avatar') || ''}
-            onBlur={(e) => {
-              const val = e.target.value.trim();
-              if (val) localStorage.setItem('haven-user-avatar', val);
-              else localStorage.removeItem('haven-user-avatar');
-            }}
-            style={inputStyle}
-          />
+          <label style={labelStyle}>Avatar</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <label style={{ cursor: 'pointer' }}>
+              {localStorage.getItem('haven-user-avatar') ? (
+                <img src={localStorage.getItem('haven-user-avatar')!} alt="" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover' }} />
+              ) : (
+                <div style={{
+                  width: '48px', height: '48px', borderRadius: '50%',
+                  background: 'var(--haven-card)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--haven-text-muted)', fontSize: '20px',
+                }}>+</div>
+              )}
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                  localStorage.setItem('haven-user-avatar', reader.result as string);
+                  window.location.reload();
+                };
+                reader.readAsDataURL(file);
+              }} />
+            </label>
+            <span style={{ fontSize: '11px', color: 'var(--haven-text-muted)' }}>Tap to upload</span>
+            {localStorage.getItem('haven-user-avatar') && (
+              <button
+                onClick={() => { localStorage.removeItem('haven-user-avatar'); window.location.reload(); }}
+                style={{ fontSize: '11px', color: '#f87171', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              >Remove</button>
+            )}
+          </div>
         </div>
         <div style={{ marginBottom: '12px' }}>
           <label style={labelStyle}>Status</label>
