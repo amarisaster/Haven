@@ -241,11 +241,15 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 
 ## Recent updates
 
-**v1.3** — Image Vision, File Reading, Per-Thread Wallpapers
+**v1.3** — Image Vision, File Reading, Message Actions, Cloud TTS
 
 - **Image vision** — attach an image and vision-capable models (GPT-4o, Claude, etc.) see and describe it. Preview before sending.
 - **File reading** — attach PDFs (up to 30 pages), text files, code files, and the model reads the content. Supports .pdf, .txt, .md, .json, .py, .ts, .js, .csv, and 20+ more formats.
 - **Per-thread wallpapers** — each conversation gets its own wallpaper, stored in IndexedDB (no localStorage overflow)
+- **Regenerate** — regenerate any companion response with one tap
+- **Copy + Delete** — copy companion messages to clipboard, delete any message
+- **GIF rendering** — GIF/image URLs in messages render inline as images
+- **Cloud TTS** — text-to-speech works on Android app via Cloudflare Workers AI fallback
 - **User profile** — set your display name, avatar (tap-to-upload), and status in Settings. Shows in chat header alongside companion.
 - **Push notifications** — local notifications when companion responds while app is in background (Android)
 
