@@ -211,6 +211,26 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
   }, [messages, threadId, selectedModel, selectedProvider]);
 
+  const handleDeleteMessage = useCallback((messageId: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== messageId));
+  }, []);
+
+  const handleRegenerateMessage = useCallback((messageId: string) => {
+    const idx = messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+
+    // Find last user message before this companion message
+    let userIdx = -1;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { userIdx = i; break; }
+    }
+    if (userIdx === -1) return;
+
+    const userContent = messages[userIdx].content;
+    setMessages(messages.slice(0, idx));
+    setTimeout(() => handleSend(userContent), 50);
+  }, [messages, handleSend]);
+
   const handleReactMessage = useCallback((messageId: string, emoji: string) => {
     setMessages((prev) =>
       prev.map((m) => {
@@ -419,6 +439,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         companionAvatar={companionAvatar}
         onEditMessage={handleEditMessage}
         onReactMessage={handleReactMessage}
+        onDeleteMessage={handleDeleteMessage}
+        onRegenerateMessage={handleRegenerateMessage}
       />
 
       {/* Input */}

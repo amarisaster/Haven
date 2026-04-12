@@ -11,6 +11,8 @@ interface MessageBubbleProps {
   companionAvatar?: string;
   onEdit?: (messageId: string, newContent: string) => void;
   onReact?: (messageId: string, emoji: string) => void;
+  onDelete?: (messageId: string) => void;
+  onRegenerate?: (messageId: string) => void;
 }
 
 const REACTIONS = ['❤️', '😂', '😮', '🥺', '🔥', '👏'];
@@ -18,7 +20,32 @@ const REACTIONS = ['❤️', '😂', '😮', '🥺', '🔥', '👏'];
 function isMediaUrl(text: string): boolean {
   const trimmed = text.trim();
   return /^https?:\/\/\S+\.(gif|png|jpg|jpeg|webp)(\?\S*)?$/i.test(trimmed) ||
-    /^https?:\/\/media\d*\.giphy\.com\//i.test(trimmed);
+    /^https?:\/\/media\d*\.giphy\.com\//i.test(trimmed) ||
+    /^https?:\/\/i\.giphy\.com\//i.test(trimmed);
+}
+
+function isMediaLine(line: string): boolean {
+  return isMediaUrl(line.trim());
+}
+
+function extractMedia(content: string): { text: string; mediaUrls: string[] } {
+  const lines = content.split('\n');
+  const textLines: string[] = [];
+  const mediaUrls: string[] = [];
+  for (const line of lines) {
+    if (isMediaLine(line)) {
+      mediaUrls.push(line.trim());
+    } else {
+      const urlMatch = line.match(/(https?:\/\/[^\s]+\.(gif|gifv|png|jpg|jpeg|webp)(\?[^\s]*)?)/i);
+      if (urlMatch && isMediaLine(urlMatch[1])) {
+        textLines.push(line.replace(urlMatch[0], '').trim());
+        mediaUrls.push(urlMatch[1]);
+      } else {
+        textLines.push(line);
+      }
+    }
+  }
+  return { text: textLines.join('\n').trim(), mediaUrls };
 }
 
 function renderFormatted(text: string): React.ReactNode[] {
@@ -79,7 +106,7 @@ function formatTimestamp(dateStr: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function MessageBubble({ message, isStreaming, fontSize = 15, fontFamily, textColor, companionAvatar, onEdit, onReact }: MessageBubbleProps) {
+export default function MessageBubble({ message, isStreaming, fontSize = 15, fontFamily, textColor, companionAvatar, onEdit, onReact, onDelete, onRegenerate }: MessageBubbleProps) {
   const [showActions, setShowActions] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
@@ -182,7 +209,17 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
             />
           ) : (
             <>
-              {renderFormatted(message.content)}
+              {(() => {
+                const { text, mediaUrls } = extractMedia(message.content);
+                return (
+                  <>
+                    {renderFormatted(text)}
+                    {mediaUrls.map((url, i) => (
+                      <img key={i} src={url} alt="" style={{ maxWidth: '200px', borderRadius: '10px', marginTop: '8px', display: 'block' }} loading="lazy" />
+                    ))}
+                  </>
+                );
+              })()}
               {isStreaming && (
                 <span
                   style={{
@@ -266,6 +303,24 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                   color: speaking ? 'white' : 'var(--haven-text-secondary)',
                 }}
               >{speaking ? '🔊' : '🔈'}</button>
+            )}
+            {isCompanion && onRegenerate && (
+              <button
+                onClick={() => onRegenerate(message.id)}
+                style={{ fontSize: '12px', background: 'var(--haven-surface)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '2px 8px', cursor: 'pointer', color: 'var(--haven-text-secondary)' }}
+              >🔄</button>
+            )}
+            {isCompanion && (
+              <button
+                onClick={() => navigator.clipboard.writeText(message.content)}
+                style={{ fontSize: '12px', background: 'var(--haven-surface)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '2px 8px', cursor: 'pointer', color: 'var(--haven-text-secondary)' }}
+              >📋</button>
+            )}
+            {onDelete && (
+              <button
+                onClick={() => onDelete(message.id)}
+                style={{ fontSize: '12px', background: 'var(--haven-surface)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '2px 8px', cursor: 'pointer', color: '#f87171' }}
+              >🗑</button>
             )}
           </div>
         )}

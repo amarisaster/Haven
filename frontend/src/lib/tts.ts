@@ -56,6 +56,12 @@ export function stop() {
 }
 
 function speakBrowser(text: string, settings: TTSSettings, onEnd?: () => void) {
+  // Check if Web Speech API is available (not on Android WebView)
+  if (!('speechSynthesis' in window) || window.speechSynthesis.getVoices().length === 0) {
+    speakCloud(text, onEnd);
+    return;
+  }
+
   const utterance = new SpeechSynthesisUtterance(text);
 
   if (settings.browserVoice) {
@@ -67,6 +73,28 @@ function speakBrowser(text: string, settings: TTSSettings, onEnd?: () => void) {
   utterance.onend = () => onEnd?.();
   utterance.onerror = () => onEnd?.();
   speechSynthesis.speak(utterance);
+}
+
+async function speakCloud(text: string, onEnd?: () => void) {
+  // Cloud TTS fallback via Cloudflare Workers AI
+  try {
+    const resp = await fetch('https://chat-bridge.example.workers.dev/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.slice(0, 1000) }),
+    });
+    if (!resp.ok) { onEnd?.(); return; }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentAudio = audio;
+    audio.onended = () => { URL.revokeObjectURL(url); currentAudio = null; onEnd?.(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); currentAudio = null; onEnd?.(); };
+    audio.play();
+  } catch {
+    onEnd?.();
+  }
 }
 
 async function speakElevenLabs(text: string, settings: TTSSettings, onEnd?: () => void) {

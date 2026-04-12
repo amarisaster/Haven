@@ -12,6 +12,8 @@ interface ChatMessagesProps {
   companionAvatar?: string;
   onEditMessage: (messageId: string, newContent: string) => void;
   onReactMessage: (messageId: string, emoji: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
+  onRegenerateMessage?: (messageId: string) => void;
 }
 
 function getWallpaperStyle(wallpaper: string): React.CSSProperties {
@@ -58,6 +60,8 @@ export default function ChatMessages({
   companionAvatar,
   onEditMessage,
   onReactMessage,
+  onDeleteMessage,
+  onRegenerateMessage,
 }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -135,6 +139,8 @@ export default function ChatMessages({
           companionAvatar={companionAvatar}
           onEdit={onEditMessage}
           onReact={onReactMessage}
+          onDelete={onDeleteMessage}
+          onRegenerate={onRegenerateMessage}
         />
       ))}
 
