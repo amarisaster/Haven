@@ -10,6 +10,7 @@ export interface Message {
   thread_id: string;
   role: 'user' | 'companion' | 'system';
   content: string;
+  image?: string;
   model?: string;
   reactions?: string[];
   created_at: string;

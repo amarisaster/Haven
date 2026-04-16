@@ -89,6 +89,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       thread_id: threadId || '',
       role: 'user',
       content,
+      ...(image && { image }),
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMsg]);

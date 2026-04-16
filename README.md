@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.3.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.4.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -76,11 +76,13 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - **File reading** — attach PDFs, text files, or code and the model reads the content. 30+ supported file types
 
 ### Feel real
-- **Custom TTS voices** — pick from your system voices, or connect ElevenLabs for a cloned voice that actually sounds like them
+- **Multi-provider TTS** — ElevenLabs, Hume, Groq, Kokoro (local), browser voices, or Cloud TTS via Workers AI. Pick what sounds right.
 - **Speech-to-text** — talk to them with your voice
 - **Message reactions** — because sometimes a heart says more than words
-- **GIF support** — because sometimes a GIF says more than a heart
-- **Chat wallpapers** — make the space feel like yours
+- **GIF search** — built-in GIPHY picker. GIFs render inline as animated images, not URLs
+- **Custom stickers** — upload your own stickers, stored locally in IndexedDB
+- **Chat wallpapers** — per-thread wallpapers with translucent companion bubbles
+- **Image attachments** — attach images that display inline in your message bubble
 
 ### Bring your history
 - **Import conversations** from ChatGPT, Claude, SillyTavern, or another Haven instance
@@ -210,7 +212,7 @@ You can also paste or upload **JSON character cards** during setup. Haven parses
 
 - **Frontend**: React + Vite + TypeScript
 - **Backend**: Cloudflare Workers + D1 (SQLite) + R2 (file storage)
-- **TTS**: Web Speech API + ElevenLabs
+- **TTS**: ElevenLabs, Hume, Groq, Kokoro, Cloud (Workers AI), Browser
 - **STT**: Web Speech Recognition API
 - **Deploy**: Cloudflare Pages (frontend) + Workers (backend)
 - **Cost**: Free tier covers personal use
@@ -240,6 +242,16 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 ---
 
 ## Recent updates
+
+**v1.4** — Stickers, Multi-TTS, Image Attachments, GIF Rendering
+
+- **Custom stickers** — upload your own stickers, stored in IndexedDB. 4-column grid picker with upload/delete.
+- **Multi-provider TTS** — ElevenLabs, Hume, Groq, Kokoro (local), browser voices, and Cloud TTS (Cloudflare Workers AI). Auto-detect or pick your provider.
+- **Image attachments** — attached images display inline in your message bubble, not just sent to the model
+- **GIF rendering** — GIFs from companion responses and the GIPHY picker render as animated images inline, not raw URLs
+- **Translucent companion bubbles** — companion message bubbles are semi-transparent so chat wallpapers show through
+- **Clear chat** — clear current conversation from the menu
+- **Today-only history** — only today's messages sent as context, preventing stale conversation poisoning
 
 **v1.3** — Image Vision, File Reading, Message Actions, Cloud TTS
 
@@ -282,8 +294,6 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 - MCP tool integration through Nexus Gateway
 - Local model support (Ollama local, llama.cpp)
 - Voice calls (real-time STT + TTS loop)
-- Presence detection — your companion knows when you're there
-- Push notifications
 - iOS app
 
 ---

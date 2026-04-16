@@ -205,7 +205,6 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               src={message.content.trim()}
               alt="media"
               style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '14px', display: 'block' }}
-              loading="lazy"
             />
           ) : (
             <>
@@ -215,11 +214,14 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                   <>
                     {renderFormatted(text)}
                     {mediaUrls.map((url, i) => (
-                      <img key={i} src={url} alt="" style={{ maxWidth: '200px', borderRadius: '10px', marginTop: '8px', display: 'block' }} loading="lazy" />
+                      <img key={i} src={url} alt="" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
                     ))}
                   </>
                 );
               })()}
+              {message.image && (
+                <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
+              )}
               {isStreaming && (
                 <span
                   style={{
