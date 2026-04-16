@@ -25,6 +25,220 @@ function json(data: unknown, status = 200) {
 }
 
 // ============================================================
+// MCP — tool discovery and execution
+// ============================================================
+
+interface McpServer {
+  id: number;
+  name: string;
+  url: string;
+  api_key: string | null;
+  enabled: number;
+  tools_cache: string | null;
+}
+
+interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: any;
+  server_id: number;
+  server_url: string;
+  server_key: string | null;
+}
+
+async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (server.api_key) headers['Authorization'] = `Bearer ${server.api_key}`;
+
+  // Initialize MCP session
+  const initResp = await fetch(server.url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.4.0' } },
+    }),
+  });
+
+  const sessionId = initResp.headers.get('mcp-session-id');
+  if (sessionId) headers['mcp-session-id'] = sessionId;
+
+  // List tools
+  const listResp = await fetch(server.url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+  });
+
+  const listData = await listResp.json() as any;
+  const tools = listData?.result?.tools || [];
+
+  return tools.map((t: any) => ({
+    name: t.name,
+    description: t.description || '',
+    inputSchema: t.inputSchema || { type: 'object', properties: {} },
+    server_id: server.id,
+    server_url: server.url,
+    server_key: server.api_key,
+  }));
+}
+
+async function executeMcpTool(
+  serverUrl: string, serverKey: string | null, toolName: string, args: Record<string, unknown>
+): Promise<string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (serverKey) headers['Authorization'] = `Bearer ${serverKey}`;
+
+  // Initialize
+  const initResp = await fetch(serverUrl, {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.4.0' } },
+    }),
+  });
+  const sessionId = initResp.headers.get('mcp-session-id');
+  if (sessionId) headers['mcp-session-id'] = sessionId;
+
+  // Call tool
+  const resp = await fetch(serverUrl, {
+    method: 'POST', headers,
+    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: toolName, arguments: args } }),
+  });
+
+  const data = await resp.json() as any;
+  const content = data?.result?.content || [];
+  return content.map((c: any) => c.text || '').join('\n') || JSON.stringify(data?.result || {});
+}
+
+function mcpToolsToOpenAI(tools: McpTool[]): any[] {
+  return tools.map(t => ({
+    type: 'function',
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    },
+  }));
+}
+
+async function loadMcpTools(db: D1Database): Promise<McpTool[]> {
+  const servers = await db.prepare('SELECT * FROM mcp_servers WHERE enabled = 1').all<McpServer>();
+  const allTools: McpTool[] = [];
+
+  for (const server of (servers.results || [])) {
+    try {
+      // Use cache if fresh (less than 5 minutes old)
+      if (server.tools_cache && server.last_discovered) {
+        const age = Date.now() - new Date(server.last_discovered).getTime();
+        if (age < 5 * 60 * 1000) {
+          const cached = JSON.parse(server.tools_cache) as McpTool[];
+          allTools.push(...cached.map(t => ({ ...t, server_id: server.id, server_url: server.url, server_key: server.api_key })));
+          continue;
+        }
+      }
+
+      const tools = await discoverMcpTools(server);
+      allTools.push(...tools);
+
+      // Cache
+      await db.prepare('UPDATE mcp_servers SET tools_cache = ?, last_discovered = datetime("now") WHERE id = ?')
+        .bind(JSON.stringify(tools), server.id).run();
+    } catch (e) {
+      console.log(`MCP discovery failed for ${server.name}: ${e}`);
+    }
+  }
+
+  return allTools;
+}
+
+// ============================================================
+// Inference with tools — agent loop
+// ============================================================
+
+async function inferenceWithTools(
+  messages: Array<{ role: string; content: any }>,
+  model: string,
+  provider: string,
+  env: Env,
+  tools: McpTool[],
+): Promise<{ content: string; toolResults: Array<{ name: string; result: string }> }> {
+  const openaiTools = mcpToolsToOpenAI(tools);
+  const toolLookup = new Map(tools.map(t => [t.name, t]));
+
+  // Build headers/URL same as streamInference
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const openrouterKey = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
+  const ollamaKey = await getSettingValue(env.DB, 'ollama_key');
+  const customKey = await getSettingValue(env.DB, 'custom_key');
+  const customBaseUrl = await getSettingValue(env.DB, 'custom_base_url');
+  const detectedProvider = await getSettingValue(env.DB, 'provider');
+  const baseOllamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
+
+  let url: string;
+  if (provider === 'ollama') {
+    url = `${baseOllamaUrl}/v1/chat/completions`;
+    if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
+  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai'].includes(detectedProvider || '')) {
+    url = `${customBaseUrl}/chat/completions`;
+    headers['Authorization'] = `Bearer ${customKey}`;
+  } else {
+    url = 'https://openrouter.ai/api/v1/chat/completions';
+    headers['Authorization'] = `Bearer ${openrouterKey}`;
+    headers['HTTP-Referer'] = 'https://haven.pages.dev';
+    headers['X-Title'] = 'Haven';
+  }
+
+  const conversation = [...messages];
+  const allToolResults: Array<{ name: string; result: string }> = [];
+  const MAX_ITERATIONS = 5;
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const resp = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: 0.8 }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Inference error ${resp.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const data = await resp.json() as any;
+    const choice = data.choices?.[0];
+    const message = choice?.message;
+
+    if (!message?.tool_calls?.length) {
+      return { content: message?.content || '', toolResults: allToolResults };
+    }
+
+    // Add assistant message with tool calls
+    conversation.push(message);
+
+    // Execute each tool
+    for (const tc of message.tool_calls) {
+      const fn = tc.function;
+      const toolInfo = toolLookup.get(fn.name);
+      let result = `Unknown tool: ${fn.name}`;
+
+      if (toolInfo) {
+        try {
+          const args = JSON.parse(fn.arguments || '{}');
+          result = await executeMcpTool(toolInfo.server_url, toolInfo.server_key, fn.name, args);
+        } catch (e) {
+          result = `Tool error: ${e}`;
+        }
+      }
+
+      allToolResults.push({ name: fn.name, result });
+      conversation.push({ role: 'tool', content: result, tool_call_id: tc.id } as any);
+    }
+  }
+
+  return { content: '', toolResults: allToolResults };
+}
+
+// ============================================================
 // Inference — stream from Ollama or OpenRouter
 // ============================================================
 
@@ -86,6 +300,17 @@ async function buildSystemPrompt(db: D1Database): Promise<string> {
   prompt += `## Capabilities\n`;
   prompt += `- You can send GIFs by including a direct GIF URL on its own line (e.g. from giphy.com or tenor.com). The chat will render it inline.\n`;
   prompt += `- You can react to the user's message by starting your response with a reaction line: [react: emoji] (e.g. [react: ❤️] or [react: 😂]). The reaction will appear on their message. Only use one reaction per response, and only when it feels natural — don't force it.\n`;
+
+  // Add MCP tool descriptions if available
+  try {
+    const mcpTools = await loadMcpTools(db);
+    if (mcpTools.length > 0) {
+      prompt += `\n## Connected Tools\nYou have access to ${mcpTools.length} tools via MCP. Use them when relevant — they are extensions of yourself.\n`;
+      for (const tool of mcpTools.slice(0, 20)) {
+        prompt += `- ${tool.name}: ${tool.description}\n`;
+      }
+    }
+  } catch {}
 
   return prompt;
 }
@@ -285,10 +510,31 @@ export default {
               // Send thread ID
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'thread', threadId: activeThreadId })}\n\n`));
 
-              // Stream tokens
-              for await (const token of streamInference(chatMessages, model, provider, env)) {
-                fullResponse += token;
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
+              // Check for MCP tools
+              const mcpTools = await loadMcpTools(env.DB);
+
+              if (mcpTools.length > 0) {
+                // Non-streaming path with function calling
+                try {
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools);
+                  fullResponse = toolResult.content;
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
+                  if (toolResult.toolResults.length > 0) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tools', results: toolResult.toolResults })}\n\n`));
+                  }
+                } catch (e) {
+                  // Fallback to streaming without tools
+                  for await (const token of streamInference(chatMessages, model, provider, env)) {
+                    fullResponse += token;
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
+                  }
+                }
+              } else {
+                // Stream tokens (no tools)
+                for await (const token of streamInference(chatMessages, model, provider, env)) {
+                  fullResponse += token;
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
+                }
               }
 
               // Check for reaction marker at the start of the response
@@ -685,6 +931,62 @@ export default {
             ...corsHeaders,
           },
         });
+      }
+
+      // ---- MCP Servers ----
+      if (path === '/api/mcp-servers' && request.method === 'GET') {
+        const servers = await env.DB.prepare('SELECT id, name, url, enabled, last_discovered, created_at FROM mcp_servers ORDER BY created_at ASC').all();
+        return json(servers.results || []);
+      }
+
+      if (path === '/api/mcp-servers' && request.method === 'POST') {
+        const { name, url: serverUrl, api_key } = await request.json() as any;
+        if (!name || !serverUrl) return json({ error: 'name and url required' }, 400);
+
+        // Create the mcp_servers table if it doesn't exist (migration-safe)
+        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS mcp_servers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL,
+          api_key TEXT, enabled INTEGER DEFAULT 1, tools_cache TEXT, last_discovered TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        )`).run();
+
+        const result = await env.DB.prepare(
+          'INSERT INTO mcp_servers (name, url, api_key) VALUES (?, ?, ?)'
+        ).bind(name, serverUrl, api_key || null).run();
+
+        return json({ success: true, id: result.meta.last_row_id });
+      }
+
+      if (path.startsWith('/api/mcp-servers/') && request.method === 'DELETE') {
+        const id = path.split('/')[3];
+        await env.DB.prepare('DELETE FROM mcp_servers WHERE id = ?').bind(id).run();
+        return json({ success: true });
+      }
+
+      if (path.startsWith('/api/mcp-servers/') && path.endsWith('/toggle') && request.method === 'PUT') {
+        const id = path.split('/')[3];
+        await env.DB.prepare('UPDATE mcp_servers SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END WHERE id = ?').bind(id).run();
+        return json({ success: true });
+      }
+
+      if (path === '/api/mcp-servers/discover' && request.method === 'POST') {
+        const { id } = await request.json() as any;
+        const server = await env.DB.prepare('SELECT * FROM mcp_servers WHERE id = ?').bind(id).first<McpServer>();
+        if (!server) return json({ error: 'Server not found' }, 404);
+
+        try {
+          const tools = await discoverMcpTools(server);
+          await env.DB.prepare('UPDATE mcp_servers SET tools_cache = ?, last_discovered = datetime("now") WHERE id = ?')
+            .bind(JSON.stringify(tools), id).run();
+          return json({ success: true, tools: tools.map(t => ({ name: t.name, description: t.description })) });
+        } catch (e) {
+          return json({ error: `Discovery failed: ${e}` }, 500);
+        }
+      }
+
+      if (path === '/api/mcp-tools' && request.method === 'GET') {
+        const tools = await loadMcpTools(env.DB);
+        return json(tools.map(t => ({ name: t.name, description: t.description, server_id: t.server_id })));
       }
 
       return json({ error: 'Not found' }, 404);

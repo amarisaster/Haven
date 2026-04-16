@@ -468,6 +468,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         </div>
       </div>
 
+      {/* MCP Servers */}
+      <McpServersSection apiUrl={import.meta.env.VITE_API_URL || ''} />
+
       {/* Chat */}
       <div style={sectionStyle}>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '16px' }}>Chat</h3>
@@ -775,6 +778,130 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           onSelect={handleWallpaperChange}
           onClose={() => setShowWallpaper(false)}
         />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// MCP Servers Section
+// ============================================================
+
+function McpServersSection({ apiUrl }: { apiUrl: string }) {
+  const [servers, setServers] = useState<Array<{ id: number; name: string; url: string; enabled: number; last_discovered: string | null }>>([]);
+  const [name, setName] = useState('');
+  const [url, setUrl] = useState('');
+  const [key, setKey] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [discovering, setDiscovering] = useState<number | null>(null);
+  const [toolCount, setToolCount] = useState<Record<number, number>>({});
+  const [expanded, setExpanded] = useState(false);
+
+  const loadServers = async () => {
+    try {
+      const resp = await fetch(`${apiUrl}/api/mcp-servers`);
+      if (resp.ok) setServers(await resp.json());
+    } catch {}
+  };
+
+  useEffect(() => { loadServers(); }, []);
+
+  const handleAdd = async () => {
+    if (!name.trim() || !url.trim()) return;
+    setAdding(true);
+    try {
+      await fetch(`${apiUrl}/api/mcp-servers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), url: url.trim(), api_key: key.trim() || null }),
+      });
+      setName(''); setUrl(''); setKey('');
+      loadServers();
+    } catch {} finally { setAdding(false); }
+  };
+
+  const handleDelete = async (id: number) => {
+    await fetch(`${apiUrl}/api/mcp-servers/${id}`, { method: 'DELETE' });
+    loadServers();
+  };
+
+  const handleToggle = async (id: number) => {
+    await fetch(`${apiUrl}/api/mcp-servers/${id}/toggle`, { method: 'PUT' });
+    loadServers();
+  };
+
+  const handleDiscover = async (id: number) => {
+    setDiscovering(id);
+    try {
+      const resp = await fetch(`${apiUrl}/api/mcp-servers/discover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setToolCount(prev => ({ ...prev, [id]: data.tools?.length || 0 }));
+      }
+    } catch {} finally { setDiscovering(null); }
+  };
+
+  const sectionStyle = { marginBottom: '24px', padding: '16px', background: 'var(--haven-card)', borderRadius: '12px', border: '1px solid var(--haven-border)' };
+  const inputStyle: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--haven-border)', background: 'var(--haven-surface)', color: 'var(--haven-text)', fontSize: '13px', outline: 'none' };
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: expanded ? '12px' : 0 }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', margin: 0 }}>
+          MCP Servers {servers.length > 0 && <span style={{ fontSize: '11px', color: 'var(--haven-text-muted)', fontWeight: 400 }}>({servers.filter(s => s.enabled).length} active)</span>}
+        </h3>
+        <button onClick={() => setExpanded(!expanded)} style={{ background: 'none', border: 'none', color: 'var(--haven-text-muted)', cursor: 'pointer', fontSize: '12px' }}>
+          {expanded ? 'Collapse' : 'Expand'}
+        </button>
+      </div>
+
+      {expanded && (
+        <>
+          <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginBottom: '12px', lineHeight: '1.4' }}>
+            Connect Cloudflare Workers with /mcp endpoints. Your companion gets their tools automatically.
+          </p>
+
+          {/* Existing servers */}
+          {servers.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', padding: '8px 10px', background: 'var(--haven-surface)', borderRadius: '8px', border: '1px solid var(--haven-border)' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: s.enabled ? '#4ade80' : '#6b7280', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '13px', color: 'var(--haven-text)', fontWeight: 500 }}>{s.name}</div>
+                <div style={{ fontSize: '10px', color: 'var(--haven-text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.url}</div>
+                {toolCount[s.id] !== undefined && (
+                  <div style={{ fontSize: '10px', color: '#4ade80' }}>{toolCount[s.id]} tools discovered</div>
+                )}
+              </div>
+              <button onClick={() => handleDiscover(s.id)} disabled={discovering === s.id} style={{ background: 'none', border: '1px solid var(--haven-border)', borderRadius: '6px', padding: '3px 8px', fontSize: '10px', color: 'var(--haven-text-muted)', cursor: 'pointer' }}>
+                {discovering === s.id ? '...' : 'Test'}
+              </button>
+              <button onClick={() => handleToggle(s.id)} style={{ background: 'none', border: 'none', color: s.enabled ? '#4ade80' : '#6b7280', cursor: 'pointer', fontSize: '11px' }}>
+                {s.enabled ? 'ON' : 'OFF'}
+              </button>
+              <button onClick={() => handleDelete(s.id)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>
+                ×
+              </button>
+            </div>
+          ))}
+
+          {/* Add new */}
+          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" style={{ ...inputStyle, flex: 1 }} />
+              <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://worker.dev/mcp" style={{ ...inputStyle, flex: 2, fontFamily: 'monospace' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="API key (optional)" style={{ ...inputStyle, flex: 1 }} />
+              <button onClick={handleAdd} disabled={adding || !name.trim() || !url.trim()} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: 'var(--haven-accent)', color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: (!name.trim() || !url.trim()) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+                {adding ? '...' : '+ Add'}
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

@@ -74,5 +74,17 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- MCP Servers (custom tool connectors)
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    api_key TEXT,
+    enabled INTEGER DEFAULT 1,
+    tools_cache TEXT,
+    last_discovered TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Seed default companion
 INSERT OR IGNORE INTO companion (id, name) VALUES (1, 'Companion');

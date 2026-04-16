@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.4.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.5.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -88,6 +88,13 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - **Import conversations** from ChatGPT, Claude, SillyTavern, or another Haven instance
 - Supports both `.json` and `.zip` files — just drop it in
 - **JSON character cards** work too (SillyTavern, TavernAI, Chub) — paste or upload, we'll parse it
+
+### Connect tools
+- **MCP Server support** — connect any Cloudflare Worker with a `/mcp` endpoint. Your companion gets their tools automatically.
+- Add servers in Settings — paste name, URL, optional API key. Done.
+- Works with [CogCor](https://github.com/amarisaster/Cognitive-Core), [Nexus Gateway](https://github.com/amarisaster/Nexus-Gateway), [Spotify MCP](https://github.com/amarisaster/Spotify-MCP), or any MCP-compatible server
+- Tool discovery — Haven finds available tools and passes them to the model via function calling
+- Your companion can now store memories, update emotional state, control Spotify, send Discord messages — whatever tools you connect
 
 ### Make it yours
 - **Font picker** — System, Serif, Mono, or **OpenDyslexic** for accessibility
@@ -237,11 +244,19 @@ Not yet in v1 — one companion per Haven instance. But you can deploy multiple 
 Haven stores your companion's identity (personality, voice, backstory) and loads it on every conversation. It's a file cabinet, not a brain — you define who your companion is, and Haven keeps it consistent. Advanced memory systems (salience, decay, emotional state) are on the roadmap.
 
 **Can I connect this to other tools?**
-Haven is built by the same team behind [Nexus Gateway](https://github.com/amarisaster/Nexus-Gateway). MCP tool integration is on the roadmap.
+Yes. Go to Settings > MCP Servers, add a server URL (any Cloudflare Worker with a `/mcp` endpoint), and Haven discovers the available tools automatically. Your companion can then use them during conversation. Works with [CogCor](https://github.com/amarisaster/Cognitive-Core), [Nexus Gateway](https://github.com/amarisaster/Nexus-Gateway), and any MCP-compatible server.
 
 ---
 
 ## Recent updates
+
+**v1.5** — MCP Server Support (Tool Connectors)
+
+- **MCP Server integration** — connect any Cloudflare Worker with a `/mcp` endpoint in Settings. Haven discovers available tools and your companion uses them via function calling.
+- **Agent loop** — when tools are connected, Haven runs an iterative tool-calling loop (up to 5 rounds) so your companion can store memories, recall context, update emotions, or use any connected tool mid-conversation.
+- **Tool discovery with caching** — tools are discovered on first connect and cached for 5 minutes. Test button in Settings verifies connectivity and shows tool count.
+- **System prompt integration** — connected tools are automatically described in the system prompt so the model knows what's available.
+- Works with CogCor, Nexus Gateway, Spotify MCP, Discord MCP, or any MCP-compatible server.
 
 **v1.4** — Stickers, Multi-TTS, Image Attachments, GIF Rendering
 
@@ -291,7 +306,6 @@ Haven is built by the same team behind [Nexus Gateway](https://github.com/amaris
 ## What's coming
 
 - Multi-companion support
-- MCP tool integration through Nexus Gateway
 - Local model support (Ollama local, llama.cpp)
 - Voice calls (real-time STT + TTS loop)
 - iOS app
