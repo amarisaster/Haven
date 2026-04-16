@@ -451,7 +451,7 @@ export default {
       // ---- Chat (SSE streaming) ----
       if (path === '/api/chat' && request.method === 'POST') {
         const body = await request.json() as any;
-        const { message, threadId, model = 'stepfun/step-3.5-flash:free', provider = 'openrouter', image } = body;
+        const { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image } = body;
 
         if (!message) return json({ error: 'message required' }, 400);
 
