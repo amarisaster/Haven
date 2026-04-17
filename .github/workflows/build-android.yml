@@ -41,6 +41,14 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      - name: Auto-bump Android version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Bumping to versionCode=$GITHUB_RUN_NUMBER versionName=$VERSION"
+          sed -i "s/versionCode [0-9]\+/versionCode $GITHUB_RUN_NUMBER/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$VERSION\"/" android/app/build.gradle
+          grep -E "versionCode|versionName" android/app/build.gradle
+
       - name: Build debug APK
         run: |
           cd android
