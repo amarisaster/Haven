@@ -70,10 +70,19 @@ export const getUserStatus = () => get<{ custom_status: string | null; presence:
 export const setUserStatus = (data: { custom_status?: string; presence?: string }) => put<{ success: boolean }>('/api/user-status', data);
 
 // File upload
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB cap — R2 / Workers pay-as-you-go
+
 export async function uploadFile(file: File): Promise<{ key: string; url: string }> {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error(`File too large (${Math.round(file.size / 1024 / 1024)}MB). Max 20MB.`);
+  }
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(`${API}/api/upload`, { method: 'POST', body: form });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '');
+    throw new Error(`Upload failed (${res.status}): ${msg.slice(0, 120)}`);
+  }
   return res.json();
 }
 

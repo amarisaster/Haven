@@ -451,9 +451,13 @@ export default {
       // ---- Chat (SSE streaming) ----
       if (path === '/api/chat' && request.method === 'POST') {
         const body = await request.json() as any;
-        const { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image } = body;
+        let { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image } = body;
 
         if (!message) return json({ error: 'message required' }, 400);
+
+        // Whitelist provider to prevent garbage input falling through to untested paths.
+        const ALLOWED_PROVIDERS = ['openrouter', 'ollama', 'openai', 'anthropic', 'groq', 'xai', 'huggingface'];
+        if (!ALLOWED_PROVIDERS.includes(provider)) provider = 'openrouter';
 
         // Get or create thread
         let activeThreadId = threadId;

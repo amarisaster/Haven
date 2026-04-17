@@ -81,7 +81,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
     getCompanion().then((c) => {
       setCompName(c.name);
       setAvatarUrl(c.avatar_url || '');
-    }).catch(() => {});
+    }).catch((e) => console.warn('[settings] getCompanion failed', e));
 
     getSettings().then((s) => {
       setApiKey(s.openrouter_key || s.ollama_key || s.custom_key || s.ollama_url || '');
@@ -100,14 +100,14 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         else if (s.provider) connected.push(s.provider);
       }
       setConnectedProviders(connected);
-    }).catch(() => {});
+    }).catch((e) => console.warn('[settings] getSettings failed', e));
 
     loadIdentities();
 
     getUserStatus().then((s) => {
       setUserStatusText(s.custom_status || '');
       setUserPresence(s.presence || 'online');
-    }).catch(() => {});
+    }).catch((e) => console.warn('[settings] getUserStatus failed', e));
   }, []);
 
   const saveUserStatus = async () => {
@@ -145,7 +145,10 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       // Only set fields for the detected provider — don't blank others
       const settings: Record<string, string> = {};
       const key = apiKey.trim();
-      if (key.startsWith('http')) {
+      if (key.startsWith('http://') || key.startsWith('https://')) {
+        // Reject anything that's not a valid http(s) URL (e.g. javascript:, file:)
+        try { new URL(key); }
+        catch { throw new Error('Invalid URL'); }
         settings.ollama_url = key;
         settings.provider = 'ollama';
       } else if (key.startsWith('hf_')) {

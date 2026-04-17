@@ -33,11 +33,13 @@ export interface Identity {
 }
 
 export interface StreamEvent {
-  type: 'thread' | 'chunk' | 'complete' | 'error';
+  type: 'thread' | 'chunk' | 'complete' | 'error' | 'tools' | 'reaction';
   threadId?: string;
   content?: string;
   model?: string;
   message?: string;
+  results?: unknown[]; // tool results (type: 'tools')
+  emoji?: string;      // reaction emoji (type: 'reaction')
 }
 
 export interface ModelInfo {

@@ -45,6 +45,7 @@ type Filter = 'all' | 'free' | 'cloud' | 'paid';
 
 export default function ModelSelector({ selectedModel, selectedProvider, onModelChange }: ModelSelectorProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [open, setOpen] = useState(false);
   const [hoveredModel, setHoveredModel] = useState<ModelInfo | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(getFavorites);
@@ -52,7 +53,9 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    getModels().then(setModels).catch(() => {});
+    getModels()
+      .then((m) => { setModels(m); setLoadState('ready'); })
+      .catch((e) => { console.warn('[models] load failed', e); setLoadState('error'); });
   }, []);
 
   useEffect(() => {
@@ -235,8 +238,11 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
           ))}
 
           {filtered.length === 0 && (
-            <div style={{ padding: '16px', textAlign: 'center', color: 'var(--haven-text-muted)', fontSize: '12px' }}>
-              No models match this filter
+            <div style={{ padding: '16px', textAlign: 'center', color: loadState === 'error' ? '#f87171' : 'var(--haven-text-muted)', fontSize: '12px' }}>
+              {loadState === 'loading' ? 'Loading models…'
+                : loadState === 'error' ? 'Could not load models. Check your connection or API keys in Settings.'
+                : models.length === 0 ? 'No models available. Add an API key in Settings.'
+                : 'No models match this filter'}
             </div>
           )}
         </div>
