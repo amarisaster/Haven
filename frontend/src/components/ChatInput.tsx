@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import GifPicker from './GifPicker';
-import { uploadFile } from '../lib/api';
+import { uploadFile, apiBase } from '../lib/api';
 import { extractFileText, isExtractableFile, type ExtractedFile } from '../lib/file-extract';
 
 interface ChatInputProps {
@@ -55,8 +55,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     setUploading(true);
     try {
       const result = await uploadFile(file);
-      const apiUrl = localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
-      onSend(`${apiUrl}${result.url}`);
+      onSend(`${apiBase()}${result.url}`);
     } catch (err) {
       console.error('Upload failed:', err);
     } finally {

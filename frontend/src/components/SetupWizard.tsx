@@ -1,12 +1,17 @@
 import { useState } from 'react';
-import { updateCompanion, updateSettings, addIdentity } from '../lib/api';
+import { updateCompanion, updateSettings, addIdentity, apiBase } from '../lib/api';
 
 interface SetupWizardProps {
   onComplete: () => void;
 }
 
 export default function SetupWizard({ onComplete }: SetupWizardProps) {
-  const [step, setStep] = useState(1);
+  // If no Worker URL is resolvable yet (typical on a freshly-installed APK),
+  // start on step 1 (Worker URL). Otherwise skip straight to Name.
+  const needsWorkerUrl = !apiBase();
+  const [step, setStep] = useState(needsWorkerUrl ? 1 : 2);
+  const [workerUrl, setWorkerUrl] = useState(localStorage.getItem('haven-api-url') || '');
+  const [testingConnection, setTestingConnection] = useState(false);
   const [name, setName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [description, setDescription] = useState('');
@@ -14,6 +19,32 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [appearance, setAppearance] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const handleTestAndSaveUrl = async () => {
+    const raw = workerUrl.trim().replace(/\/+$/, '');
+    if (!raw) { setError('Enter your Haven Worker URL'); return; }
+    if (!/^https?:\/\//i.test(raw)) { setError('URL must start with http:// or https://'); return; }
+
+    setTestingConnection(true);
+    setError('');
+    try {
+      const res = await fetch(`${raw}/api/companion`);
+      const text = await res.text();
+      try {
+        JSON.parse(text);
+      } catch {
+        setError("That URL didn't return JSON — double-check it points at your Haven Worker.");
+        return;
+      }
+      localStorage.setItem('haven-api-url', raw);
+      setWorkerUrl(raw);
+      setStep(2);
+    } catch (e) {
+      setError(`Couldn't reach that URL: ${e instanceof Error ? e.message : 'network error'}`);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
 
   const detectProvider = (key: string): { provider: string; label: string } => {
     const k = key.trim();
@@ -32,7 +63,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
   const handleFinish = async () => {
     if (!name.trim()) { setError('Please enter a name'); return; }
-    if (!apiKey.trim()) { setError('Please enter an API key'); setStep(2); return; }
+    if (!apiKey.trim()) { setError('Please enter an API key'); setStep(3); return; }
 
     setSaving(true);
     setError('');
@@ -190,7 +221,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       }}>
         {/* Progress dots */}
         <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '28px' }}>
-          {[1, 2, 3, 4].map((s) => (
+          {(needsWorkerUrl ? [1, 2, 3, 4, 5] : [2, 3, 4, 5]).map((s) => (
             <div key={s} style={{
               width: '8px', height: '8px', borderRadius: '50%',
               background: s <= step ? 'var(--haven-accent)' : 'var(--haven-border)',
@@ -199,8 +230,56 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           ))}
         </div>
 
-        {/* Step 1: Name */}
+        {/* Step 1: Worker URL (only if not already configured — e.g. fresh APK install) */}
         {step === 1 && (
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px', textAlign: 'center' }}>
+              Connect to your Haven Worker
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--haven-text-muted)', textAlign: 'center', marginBottom: '24px' }}>
+              Paste the URL of the Cloudflare Worker you deployed. It usually looks like{' '}
+              <code style={{ color: 'var(--haven-text)' }}>https://your-haven.workers.dev</code>.
+            </p>
+            <input
+              type="url"
+              value={workerUrl}
+              onChange={(e) => setWorkerUrl(e.target.value)}
+              placeholder="https://your-haven.workers.dev"
+              autoFocus
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !testingConnection) handleTestAndSaveUrl(); }}
+              style={{
+                width: '100%', padding: '12px 16px', borderRadius: '10px',
+                background: 'var(--haven-card)', border: '1px solid var(--haven-border)',
+                color: 'var(--haven-text)', fontSize: '14px', outline: 'none',
+                fontFamily: 'monospace',
+              }}
+            />
+            {error && (
+              <p style={{ color: '#f87171', fontSize: '12px', marginTop: '8px', textAlign: 'center' }}>{error}</p>
+            )}
+            <button
+              onClick={handleTestAndSaveUrl}
+              disabled={!workerUrl.trim() || testingConnection}
+              style={{
+                width: '100%', marginTop: '20px', padding: '12px',
+                borderRadius: '10px', border: 'none',
+                background: workerUrl.trim() && !testingConnection ? 'var(--haven-accent)' : 'var(--haven-border)',
+                color: 'white', fontSize: '14px', fontWeight: 600,
+                cursor: workerUrl.trim() && !testingConnection ? 'pointer' : 'default',
+                opacity: testingConnection ? 0.7 : 1,
+              }}
+            >{testingConnection ? 'Testing connection...' : 'Test & Continue'}</button>
+            <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginTop: '16px', textAlign: 'center' }}>
+              Haven is self-hosted. You deploy the Worker once (free on Cloudflare), then paste the URL here.
+            </p>
+          </div>
+        )}
+
+        {/* Step 2: Name */}
+        {step === 2 && (
           <div>
             <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px', textAlign: 'center' }}>
               What's your companion's name?
@@ -214,7 +293,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Nova, Echo, Kai..."
               autoFocus
-              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) setStep(2); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) setStep(3); }}
               style={{
                 width: '100%', padding: '12px 16px', borderRadius: '10px',
                 background: 'var(--haven-card)', border: '1px solid var(--haven-border)',
@@ -222,21 +301,33 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 textAlign: 'center',
               }}
             />
-            <button
-              onClick={() => { if (name.trim()) setStep(2); }}
-              disabled={!name.trim()}
-              style={{
-                width: '100%', marginTop: '20px', padding: '12px',
-                borderRadius: '10px', border: 'none',
-                background: name.trim() ? 'var(--haven-accent)' : 'var(--haven-border)',
-                color: 'white', fontSize: '14px', fontWeight: 600, cursor: name.trim() ? 'pointer' : 'default',
-              }}
-            >Next</button>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
+              {needsWorkerUrl && (
+                <button
+                  onClick={() => setStep(1)}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: '10px',
+                    border: '1px solid var(--haven-border)', background: 'transparent',
+                    color: 'var(--haven-text-secondary)', fontSize: '14px', cursor: 'pointer',
+                  }}
+                >Back</button>
+              )}
+              <button
+                onClick={() => { if (name.trim()) setStep(3); }}
+                disabled={!name.trim()}
+                style={{
+                  flex: needsWorkerUrl ? 2 : 1, width: needsWorkerUrl ? undefined : '100%',
+                  padding: '12px', borderRadius: '10px', border: 'none',
+                  background: name.trim() ? 'var(--haven-accent)' : 'var(--haven-border)',
+                  color: 'white', fontSize: '14px', fontWeight: 600, cursor: name.trim() ? 'pointer' : 'default',
+                }}
+              >Next</button>
+            </div>
           </div>
         )}
 
-        {/* Step 2: API Key */}
-        {step === 2 && (
+        {/* Step 3: API Key */}
+        {step === 3 && (
           <div>
             <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px', textAlign: 'center' }}>
               Paste your API key
@@ -251,7 +342,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Paste any API key..."
               autoFocus
-              onKeyDown={(e) => { if (e.key === 'Enter' && apiKey.trim()) setStep(3); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && apiKey.trim()) setStep(4); }}
               style={{
                 width: '100%', padding: '12px 16px', borderRadius: '10px',
                 background: 'var(--haven-card)', border: '1px solid var(--haven-border)',
@@ -280,7 +371,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
             <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
               <button
-                onClick={() => setStep(1)}
+                onClick={() => setStep(2)}
                 style={{
                   flex: 1, padding: '12px', borderRadius: '10px',
                   border: '1px solid var(--haven-border)', background: 'transparent',
@@ -288,7 +379,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 }}
               >Back</button>
               <button
-                onClick={() => { if (apiKey.trim()) setStep(3); }}
+                onClick={() => { if (apiKey.trim()) setStep(4); }}
                 disabled={!apiKey.trim()}
                 style={{
                   flex: 2, padding: '12px', borderRadius: '10px', border: 'none',
@@ -300,8 +391,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           </div>
         )}
 
-        {/* Step 3: Description */}
-        {step === 3 && (
+        {/* Step 4: Description */}
+        {step === 4 && (
           <div>
             <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px', textAlign: 'center' }}>
               Companion Identity
@@ -353,7 +444,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             )}
             <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
               <button
-                onClick={() => setStep(2)}
+                onClick={() => setStep(3)}
                 style={{
                   flex: 1, padding: '12px', borderRadius: '10px',
                   border: '1px solid var(--haven-border)', background: 'transparent',
@@ -361,7 +452,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 }}
               >Back</button>
               <button
-                onClick={() => setStep(4)}
+                onClick={() => setStep(5)}
                 style={{
                   flex: 2, padding: '12px', borderRadius: '10px', border: 'none',
                   background: 'var(--haven-accent)', color: 'white',
@@ -372,8 +463,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           </div>
         )}
 
-        {/* Step 4: Appearance */}
-        {step === 4 && (
+        {/* Step 5: Appearance */}
+        {step === 5 && (
           <div>
             <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px', textAlign: 'center' }}>
               What does {name || 'your companion'} look like?
@@ -400,7 +491,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             )}
             <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
               <button
-                onClick={() => setStep(3)}
+                onClick={() => setStep(4)}
                 style={{
                   flex: 1, padding: '12px', borderRadius: '10px',
                   border: '1px solid var(--haven-border)', background: 'transparent',

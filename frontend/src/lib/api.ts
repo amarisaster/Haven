@@ -4,33 +4,54 @@
 
 import type { Thread, Message, Companion, Identity, ModelInfo } from './types';
 
-const API = localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
+// Resolved per-call so SetupWizard/Settings changes to localStorage take effect
+// without a page reload. On native APKs this is the only way the user can
+// point the app at their own Worker.
+export function apiBase(): string {
+  return localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
+}
+
+async function parseJson<T>(res: Response, path: string): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const head = text.trimStart().slice(0, 20).toLowerCase();
+    if (head.startsWith('<!doctype') || head.startsWith('<html')) {
+      throw new Error(
+        `Worker didn't return JSON for ${path}. Check your Haven Worker URL in Settings — ` +
+        `requests are hitting the app shell instead of the API.`
+      );
+    }
+    throw new Error(`Invalid JSON response from ${path}`);
+  }
+}
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`);
-  return res.json();
+  const res = await fetch(`${apiBase()}${path}`);
+  return parseJson<T>(res, path);
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return res.json();
+  return parseJson<T>(res, path);
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return res.json();
+  return parseJson<T>(res, path);
 }
 
 async function del(path: string): Promise<void> {
-  await fetch(`${API}${path}`, { method: 'DELETE' });
+  await fetch(`${apiBase()}${path}`, { method: 'DELETE' });
 }
 
 // Threads
@@ -78,7 +99,7 @@ export async function uploadFile(file: File): Promise<{ key: string; url: string
   }
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API}/api/upload`, { method: 'POST', body: form });
+  const res = await fetch(`${apiBase()}/api/upload`, { method: 'POST', body: form });
   if (!res.ok) {
     const msg = await res.text().catch(() => '');
     throw new Error(`Upload failed (${res.status}): ${msg.slice(0, 120)}`);
@@ -88,11 +109,11 @@ export async function uploadFile(file: File): Promise<{ key: string; url: string
 
 // Export
 export function exportThreadUrl(threadId: string): string {
-  return `${API}/api/export/thread/${threadId}`;
+  return `${apiBase()}/api/export/thread/${threadId}`;
 }
 
 export function exportAllUrl(): string {
-  return `${API}/api/export/all`;
+  return `${apiBase()}/api/export/all`;
 }
 
 // Chat (SSE stream)
@@ -103,7 +124,7 @@ export async function* sendChat(
   provider: string,
   image?: string,
 ): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string }> {
-  const res = await fetch(`${API}/api/chat`, {
+  const res = await fetch(`${apiBase()}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}) }),

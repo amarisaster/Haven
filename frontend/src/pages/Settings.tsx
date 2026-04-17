@@ -4,7 +4,7 @@ import {
   getCompanion, updateCompanion,
   getSettings, updateSettings,
   getIdentity, addIdentity, deleteIdentity,
-  uploadFile, getUserStatus, setUserStatus,
+  uploadFile, getUserStatus, setUserStatus, apiBase,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -416,8 +416,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
                 if (!file) return;
                 try {
                   const result = await uploadFile(file);
-                  const apiUrl = import.meta.env.VITE_API_URL || '';
-                  setAvatarUrl(`${apiUrl}${result.url}`);
+                  setAvatarUrl(`${apiBase()}${result.url}`);
                 } catch {}
               }} />
             </label>
@@ -482,7 +481,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       </div>
 
       {/* MCP Servers */}
-      <McpServersSection apiUrl={import.meta.env.VITE_API_URL || ''} />
+      <McpServersSection apiUrl={apiBase()} />
 
       {/* Chat */}
       <div style={sectionStyle}>
@@ -750,7 +749,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '16px' }}>Data & Export</h3>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
           <a
-            href={`${import.meta.env.VITE_API_URL || ''}/api/export/all`}
+            href={`${apiBase()}/api/export/all`}
             download
             style={{
               flex: 1, padding: '10px', borderRadius: '8px', textAlign: 'center',

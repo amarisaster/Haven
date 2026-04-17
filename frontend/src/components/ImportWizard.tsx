@@ -5,14 +5,12 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { autoDetectAndParse, type ImportResult } from '../lib/importers';
-import { createThread, updateCompanion, addIdentity } from '../lib/api';
+import { createThread, updateCompanion, addIdentity, apiBase } from '../lib/api';
 
 interface ImportWizardProps {
   onClose: () => void;
   onComplete: (threadCount: number) => void;
 }
-
-const API = localStorage.getItem('haven-api-url') || import.meta.env.VITE_API_URL || '';
 
 export default function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
   const [step, setStep] = useState<'upload' | 'preview' | 'importing' | 'done'>('upload');
@@ -133,7 +131,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
         if (created?.id) {
           // Save messages via direct API
           for (const msg of thread.messages) {
-            await fetch(`${API}/api/import/message`, {
+            await fetch(`${apiBase()}/api/import/message`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
