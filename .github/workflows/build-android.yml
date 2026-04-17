@@ -9,12 +9,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: frontend
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -28,6 +32,23 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
+
+      - name: Ensure stable debug keystore
+        run: |
+          if [ ! -f android/app/debug.keystore ]; then
+            echo "No debug.keystore — generating one and committing so every build signs identically."
+            keytool -genkey -v -keystore android/app/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 36500 \
+              -dname 'CN=Android Debug,O=Android,C=US'
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add android/app/debug.keystore
+            git -c core.autocrlf=false commit -m "chore(haven): add stable debug keystore for reproducible APK signing"
+            git push
+          else
+            echo "debug.keystore exists — builds will sign with it."
+          fi
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
