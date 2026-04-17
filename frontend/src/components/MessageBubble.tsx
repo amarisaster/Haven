@@ -17,35 +17,82 @@ interface MessageBubbleProps {
 
 const REACTIONS = ['❤️', '😂', '😮', '🥺', '🔥', '👏'];
 
-function isMediaUrl(text: string): boolean {
-  const trimmed = text.trim();
-  return /^https?:\/\/\S+\.(gif|png|jpg|jpeg|webp)(\?\S*)?$/i.test(trimmed) ||
-    /^https?:\/\/media\d*\.giphy\.com\//i.test(trimmed) ||
-    /^https?:\/\/i\.giphy\.com\//i.test(trimmed);
-}
+type ContentPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; url: string }
+  | { kind: 'gif'; url: string }
+  | { kind: 'video'; url: string }
+  | { kind: 'audio'; url: string }
+  | { kind: 'file'; filename: string; pages?: string; body: string };
 
-function isMediaLine(line: string): boolean {
-  return isMediaUrl(line.trim());
-}
-
-function extractMedia(content: string): { text: string; mediaUrls: string[] } {
-  const lines = content.split('\n');
-  const textLines: string[] = [];
-  const mediaUrls: string[] = [];
-  for (const line of lines) {
-    if (isMediaLine(line)) {
-      mediaUrls.push(line.trim());
-    } else {
-      const urlMatch = line.match(/(https?:\/\/[^\s]+\.(gif|gifv|png|jpg|jpeg|webp)(\?[^\s]*)?)/i);
-      if (urlMatch && isMediaLine(urlMatch[1])) {
-        textLines.push(line.replace(urlMatch[0], '').trim());
-        mediaUrls.push(urlMatch[1]);
-      } else {
-        textLines.push(line);
-      }
-    }
+function classifyUrl(raw: string): ContentPart['kind'] | null {
+  const u = raw.trim();
+  if (u.startsWith('data:')) {
+    if (/^data:image\/gif/i.test(u)) return 'gif';
+    if (/^data:image\//i.test(u)) return 'image';
+    if (/^data:video\//i.test(u)) return 'video';
+    if (/^data:audio\//i.test(u)) return 'audio';
+    return null;
   }
-  return { text: textLines.join('\n').trim(), mediaUrls };
+  if (!/^https?:\/\//i.test(u)) return null;
+  if (/\.(gif|gifv)(\?|$)/i.test(u)) return 'gif';
+  if (/^https?:\/\/(media\d*|i)\.giphy\.com\//i.test(u)) return 'gif';
+  if (/^https?:\/\/giphy\.com\/gifs\//i.test(u)) return 'gif';
+  if (/tenor\.com\//i.test(u)) return 'gif';
+  if (/\.(mp4|webm|mov)(\?|$)/i.test(u)) return 'video';
+  if (/\.(mp3|wav|ogg|m4a|flac)(\?|$)/i.test(u)) return 'audio';
+  if (/\.(png|jpg|jpeg|webp|svg)(\?|$)/i.test(u)) return 'image';
+  return null;
+}
+
+function parseContent(content: string): ContentPart[] {
+  const parts: ContentPart[] = [];
+  const segments: Array<string | { filename: string; pages?: string; body: string }> = [];
+  const fileBlockRegex = /<file\s+name="([^"]+)"(?:\s+pages="([^"]+)")?>([\s\S]*?)<\/file>/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = fileBlockRegex.exec(content)) !== null) {
+    if (m.index > lastIdx) segments.push(content.slice(lastIdx, m.index));
+    segments.push({ filename: m[1], pages: m[2], body: m[3] });
+    lastIdx = fileBlockRegex.lastIndex;
+  }
+  if (lastIdx < content.length) segments.push(content.slice(lastIdx));
+
+  for (const seg of segments) {
+    if (typeof seg !== 'string') {
+      parts.push({ kind: 'file', filename: seg.filename, pages: seg.pages, body: seg.body });
+      continue;
+    }
+    const buffered: string[] = [];
+    const flush = () => {
+      const t = buffered.join('\n').trim();
+      if (t) parts.push({ kind: 'text', text: t });
+      buffered.length = 0;
+    };
+    for (const line of seg.split('\n')) {
+      const trimmed = line.trim();
+      const wholeLineKind = trimmed ? classifyUrl(trimmed) : null;
+      if (wholeLineKind) {
+        flush();
+        parts.push({ kind: wholeLineKind, url: trimmed } as ContentPart);
+        continue;
+      }
+      const urlMatch = trimmed.match(/(https?:\/\/[^\s)]+)/);
+      if (urlMatch) {
+        const k = classifyUrl(urlMatch[1]);
+        if (k) {
+          const before = trimmed.replace(urlMatch[1], '').trim();
+          if (before) buffered.push(before);
+          flush();
+          parts.push({ kind: k, url: urlMatch[1] } as ContentPart);
+          continue;
+        }
+      }
+      buffered.push(line);
+    }
+    flush();
+  }
+  return parts;
 }
 
 function renderFormatted(text: string): React.ReactNode[] {
@@ -106,6 +153,85 @@ function formatTimestamp(dateStr: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function renderContentParts(parts: ContentPart[], keyPrefix: string): React.ReactNode[] {
+  return parts.map((part, i) => {
+    const k = `${keyPrefix}-${i}`;
+    switch (part.kind) {
+      case 'text':
+        return <div key={k}>{renderFormatted(part.text)}</div>;
+      case 'image':
+      case 'gif':
+        return (
+          <img
+            key={k}
+            src={part.url}
+            alt=""
+            style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
+            loading="lazy"
+          />
+        );
+      case 'video':
+        return (
+          <video
+            key={k}
+            src={part.url}
+            controls
+            preload="metadata"
+            style={{ maxWidth: '320px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
+          />
+        );
+      case 'audio':
+        return (
+          <audio
+            key={k}
+            src={part.url}
+            controls
+            preload="metadata"
+            style={{ maxWidth: '100%', marginTop: '8px', display: 'block' }}
+          />
+        );
+      case 'file': {
+        const sizeHint = part.pages
+          ? `${part.pages} pages · ${Math.round(part.body.length / 1000)}k chars`
+          : `${Math.round(part.body.length / 1000)}k chars`;
+        return (
+          <div
+            key={k}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'var(--haven-surface)',
+              border: '1px solid var(--haven-border)',
+              borderRadius: '10px',
+              padding: '8px 12px',
+              marginTop: '8px',
+            }}
+          >
+            <span style={{ fontSize: '16px' }}>📄</span>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--haven-text)',
+                  maxWidth: '220px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {part.filename}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--haven-text-muted)' }}>{sizeHint}</div>
+            </div>
+          </div>
+        );
+      }
+    }
+  });
+}
+
 export default function MessageBubble({ message, isStreaming, fontSize = 15, fontFamily, textColor, companionAvatar, onEdit, onReact, onDelete, onRegenerate }: MessageBubbleProps) {
   const [showActions, setShowActions] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -137,7 +263,10 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
     setShowActions(false);
   };
 
-  const media = isMediaUrl(message.content);
+  const parsedParts = parseContent(message.content);
+  // If the whole message is a single media URL, render the bubble in "media
+  // mode" (tight padding, no bubble chrome) for the classic clean look.
+  const mediaOnly = parsedParts.length === 1 && parsedParts[0].kind !== 'text' && parsedParts[0].kind !== 'file';
 
   return (
     <div
@@ -156,7 +285,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
             color: textColor && !isUser ? textColor : isUser ? '#1c1917' : 'var(--haven-text)',
             borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
             borderLeft: isCompanion ? '3px solid var(--haven-accent)' : undefined,
-            padding: media ? '4px' : '10px 14px',
+            padding: mediaOnly ? '4px' : '10px 14px',
             fontSize: `${fontSize}px`,
             fontFamily: fontFamily && fontFamily !== 'System' ? fontFamily : undefined,
             lineHeight: '1.5',
@@ -200,25 +329,9 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                 >Save</button>
               </div>
             </div>
-          ) : media ? (
-            <img
-              src={message.content.trim()}
-              alt="media"
-              style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '14px', display: 'block' }}
-            />
           ) : (
             <>
-              {(() => {
-                const { text, mediaUrls } = extractMedia(message.content);
-                return (
-                  <>
-                    {renderFormatted(text)}
-                    {mediaUrls.map((url, i) => (
-                      <img key={i} src={url} alt="" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
-                    ))}
-                  </>
-                );
-              })()}
+              {renderContentParts(parsedParts, `m-${message.id}`)}
               {message.image && (
                 <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
               )}

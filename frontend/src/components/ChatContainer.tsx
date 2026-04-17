@@ -83,12 +83,17 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     setError(null);
     setShowMenu(false);
 
+    // Fold the <file>...</file> block into the persisted content so reloads
+    // keep the file attached to the conversation and MessageBubble can
+    // render it as a file card. The backend still sees the full block.
+    const persistedContent = fileContext ? `${content}\n\n${fileContext}` : content;
+
     // Optimistic user message
     const userMsg: Message = {
       id: `temp-${Date.now()}`,
       thread_id: threadId || '',
       role: 'user',
-      content,
+      content: persistedContent,
       ...(image && { image }),
       created_at: new Date().toISOString(),
     };
@@ -100,8 +105,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let responseModel = '';
 
     try {
-      const messageWithFile = fileContext ? `${content}\n\n${fileContext}` : content;
-      for await (const event of sendChat(messageWithFile, threadId, selectedModel, selectedProvider, image)) {
+      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image)) {
         switch (event.type) {
           case 'thread':
             if (event.threadId && !currentThreadId) {

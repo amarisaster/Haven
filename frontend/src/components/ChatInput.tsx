@@ -76,7 +76,11 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
       ? `<file name="${pendingFile.filename}"${pendingFile.pageCount ? ` pages="${pendingFile.pageCount}"` : ''}>\n${pendingFile.text}\n</file>`
       : undefined;
 
-    onSend(trimmed || (pendingImage ? '(image)' : `(file: ${pendingFile?.filename})`), pendingImage || undefined, fileContext);
+    // The image still rides the separate `image` param (data URL for vision);
+    // the file block rides `fileContext` and is folded into persisted content
+    // downstream. No "(file: name)" placeholder — MessageBubble renders a
+    // real file card.
+    onSend(trimmed, pendingImage || undefined, fileContext);
     setText('');
     setPendingImage(null);
     setPendingFile(null);
