@@ -250,8 +250,14 @@ Yes. Go to Settings > MCP Servers, add a server URL (any Cloudflare Worker with 
 
 ## Recent updates
 
-**v1.6** — Unified Media Rendering + File Cards
+**v1.6.1** — Self-Hosted Setup Fix + Unified Media Rendering
 
+- **Setup wizard actually finishes on APK installs** — if you saw `Unexpected token '<', "<!doctype "... is not valid JSON` on Finish, that's gone. The wizard now asks for your Haven Worker URL as its first step, pings it to verify the response is JSON, and only lets you continue once the connection works.
+- **Worker URL resolves per-request** — changes you make in Settings (or during setup) now take effect immediately. No more stale reads from the original page load.
+- **Readable errors when the Worker's unreachable** — instead of a cryptic JSON parse crash, you get "Check your Haven Worker URL in Settings."
+- **Model picker expands to paid models as soon as an API key is set**; ElevenLabs save state fixed.
+- **Stable Android debug keystore** — APK updates install in-place instead of forcing uninstall + reinstall.
+- **Audit follow-ups** — loader error states, tighter input validation, type alignment.
 - **Audio & video inline** — `.mp3`/`.wav`/`.ogg`/`.m4a`/`.flac` URLs render as an `<audio>` player; `.mp4`/`.webm`/`.mov` render as a `<video>` player. Works for both your messages and companion replies.
 - **Companion-side media** — previously only your messages extracted media URLs from text. Now companion replies run through the same parser, so a GIF the model embeds in its response renders as an animated image instead of a raw link.
 - **File attachment cards** — attached PDFs, text, code, and JSON files now show as a proper file card (📄 filename + page count + char count) in the message bubble instead of a `(file: name.pdf)` placeholder. The file's extracted text is folded into the persisted message so reloading the thread keeps the companion's memory of the attachment — no more "what file?" on refresh.
