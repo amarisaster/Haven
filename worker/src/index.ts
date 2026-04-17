@@ -735,8 +735,9 @@ export default {
           const data = await res.json() as any;
           for (const m of (data.data || [])) {
             const isFree = m.id?.endsWith(':free') || (Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0);
-            // Only show free models by default — users add paid models through their own OpenRouter key
-            if (isFree) {
+            // Free models always listed. Paid models listed only when the user
+            // has their own OpenRouter key configured (so charges go to them).
+            if (isFree || hasOpenRouter) {
               models.push({
                 id: m.id,
                 name: m.name || m.id,

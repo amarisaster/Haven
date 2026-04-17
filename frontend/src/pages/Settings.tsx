@@ -57,8 +57,18 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
     return () => speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
 
-  const saveVoice = () => {
-    saveTTSSettings({ mode: ttsMode, browserVoice, elevenLabsKey: elevenKey, elevenLabsVoiceId: elevenVoiceId });
+  const [voiceSaving, setVoiceSaving] = useState(false);
+  const [voiceMsg, setVoiceMsg] = useState('');
+  const saveVoice = async () => {
+    setVoiceSaving(true);
+    try {
+      saveTTSSettings({ mode: ttsMode, browserVoice, elevenLabsKey: elevenKey, elevenLabsVoiceId: elevenVoiceId });
+      setVoiceMsg('Saved');
+    } catch {
+      setVoiceMsg('Error');
+    }
+    setVoiceSaving(false);
+    setTimeout(() => setVoiceMsg(''), 2000);
   };
 
   // Identity
@@ -636,8 +646,10 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             </div>
             <button
               onClick={saveVoice}
+              disabled={voiceSaving}
               style={btnStyle}
-            >Save</button>
+            >{voiceSaving ? 'Saving...' : 'Save'}</button>
+            {voiceMsg && <span style={{ fontSize: '12px', color: voiceMsg === 'Saved' ? '#4ade80' : '#f87171', marginLeft: '8px' }}>{voiceMsg}</span>}
             <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginTop: '8px' }}>
               Clone a voice in ElevenLabs Voice Lab, copy the Voice ID, paste it here. Your companion speaks with that voice.
             </p>
