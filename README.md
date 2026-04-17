@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.5.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.6.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -249,6 +249,14 @@ Yes. Go to Settings > MCP Servers, add a server URL (any Cloudflare Worker with 
 ---
 
 ## Recent updates
+
+**v1.6** — Unified Media Rendering + File Cards
+
+- **Audio & video inline** — `.mp3`/`.wav`/`.ogg`/`.m4a`/`.flac` URLs render as an `<audio>` player; `.mp4`/`.webm`/`.mov` render as a `<video>` player. Works for both your messages and companion replies.
+- **Companion-side media** — previously only your messages extracted media URLs from text. Now companion replies run through the same parser, so a GIF the model embeds in its response renders as an animated image instead of a raw link.
+- **File attachment cards** — attached PDFs, text, code, and JSON files now show as a proper file card (📄 filename + page count + char count) in the message bubble instead of a `(file: name.pdf)` placeholder. The file's extracted text is folded into the persisted message so reloading the thread keeps the companion's memory of the attachment — no more "what file?" on refresh.
+- **Data-URL images, stickers, pasted images** — all render inline via the unified classifier.
+- **Expanded GIF host coverage** — giphy.com/gifs/, i.giphy.com, tenor.com URLs now all detected alongside direct `.gif`/`.gifv` links.
 
 **v1.5** — MCP Server Support (Tool Connectors)
 
