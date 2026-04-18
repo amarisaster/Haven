@@ -2,6 +2,8 @@
  * Haven TTS — supports browser voices + ElevenLabs
  */
 
+import { apiBase } from './api';
+
 const LS_VOICE = 'haven-tts-voice';
 const LS_ELEVEN_KEY = 'haven-eleven-key';
 const LS_ELEVEN_VOICE = 'haven-eleven-voice-id';
@@ -76,9 +78,13 @@ function speakBrowser(text: string, settings: TTSSettings, onEnd?: () => void) {
 }
 
 async function speakCloud(text: string, onEnd?: () => void) {
-  // Cloud TTS fallback via Cloudflare Workers AI
+  // Cloud TTS fallback — routes through the user's own Haven Worker at /api/tts.
+  // If their Worker doesn't implement /api/tts, the fetch returns 404 and we
+  // silently give up. Users needing Android TTS should configure ElevenLabs.
+  const base = apiBase();
+  if (!base) { onEnd?.(); return; }
   try {
-    const resp = await fetch('https://chat-bridge.example.workers.dev/api/tts', {
+    const resp = await fetch(`${base}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text.slice(0, 1000) }),

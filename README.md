@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.6.1-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.6.2-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -313,6 +313,23 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.6.2** — MCP Connector Reliability + Self-Hosting Hardening
+
+MCP:
+- **Test button now reports real errors.** Previously a failed MCP discovery just cleared the spinner with no feedback, so users couldn't tell why their server wasn't working. Settings → MCP Servers now shows the specific reason in red next to the server (HTTP code, auth error, protocol mismatch).
+- **Spec-compliant MCP handshake.** `discoverMcpTools` and `executeMcpTool` now send the `notifications/initialized` message after `initialize`, as the MCP spec requires. Strict servers were rejecting `tools/list` calls without it — tools appeared to silently vanish.
+- **HuggingFace provider routing fixed.** Both `streamInference` and `inferenceWithTools` now include `'huggingface'` in the custom-base-url whitelist. HF users were falling through to OpenRouter with no OpenRouter key — breaking chat and MCP entirely, not just tools.
+- **Explicit discovery error throws.** Worker now throws readable errors on non-OK `initialize` and `tools/list` responses instead of silently returning empty tool lists.
+
+Self-hosting hardening (these were leaking to shared infrastructure before):
+- **`GET /api/settings` no longer returns raw API keys.** Sensitive fields (anything matching `_key`, `_token`, `_secret`, `password`) now return a `***set***` placeholder. The truthy existence check the UI uses still works, so you can still see "OpenRouter connected," but a curl against your Worker URL won't exfiltrate the key.
+- **`PUT /api/settings` now allowlists known keys + preserves secrets on round-trip.** Unknown keys are silently rejected. If the request body contains `***set***` for a secret (e.g., user hit Save without retyping their key), the existing value is preserved instead of being overwritten with the placeholder.
+- **Cloud TTS no longer routes through a shared Cloudflare Worker.** Previously Android WebView TTS fallback silently sent your companion's message text through a hardcoded third-party worker URL. It now calls `/api/tts` on your own Worker (a 404 there simply disables cloud TTS — configure ElevenLabs in Settings for Android TTS).
+- **Removed hardcoded `HTTP-Referer` header** sent to OpenRouter. Self-hosted instances now appear under their own identity instead of being attributed to another deployment.
+
+Docs:
+- **Added "Updating Haven" and "Troubleshooting" sections** to this README — common error codes (401, 403, 404, 429, 5xx), MCP-specific failures, and how to pull + redeploy patches on self-hosted instances.
 
 **v1.6.1** — Self-Hosted Setup Fix + Unified Media Rendering
 

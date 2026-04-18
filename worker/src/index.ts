@@ -210,7 +210,6 @@ async function inferenceWithTools(
   } else {
     url = 'https://openrouter.ai/api/v1/chat/completions';
     headers['Authorization'] = `Bearer ${openrouterKey}`;
-    headers['HTTP-Referer'] = 'https://haven.pages.dev';
     headers['X-Title'] = 'Haven';
   }
 
@@ -376,7 +375,6 @@ async function* streamInference(
   } else {
     url = 'https://openrouter.ai/api/v1/chat/completions';
     headers['Authorization'] = `Bearer ${openrouterKey}`;
-    headers['HTTP-Referer'] = 'https://haven.pages.dev';
     headers['X-Title'] = 'Haven';
   }
 
@@ -692,11 +690,31 @@ export default {
       }
 
       // ---- Settings ----
+      // Anyone with a Haven Worker URL can GET /api/settings. Before v1.6.2 this
+      // returned raw API keys (OpenRouter, Anthropic, etc.) to any caller. Now
+      // we redact anything that looks like a secret to a fixed placeholder, and
+      // PUT skips writes when the placeholder comes back unchanged — so the
+      // round-trip preserves the real key when a user hits Save without retyping.
+      const SETTINGS_SECRET_PLACEHOLDER = '***set***';
+      const SETTINGS_SECRET_PATTERN = /_key$|_token$|_secret$|password/i;
+      const ALLOWED_SETTINGS_KEYS = new Set([
+        'provider',
+        'openrouter_key',
+        'custom_key', 'custom_base_url',
+        'ollama_url', 'ollama_key',
+        'companion_status', 'companion_presence',
+        'user_status', 'user_presence',
+      ]);
+
       if (path === '/api/settings' && request.method === 'GET') {
         const settings = await env.DB.prepare('SELECT * FROM settings').all();
         const obj: Record<string, string> = {};
         for (const row of (settings.results || []) as Array<{ key: string; value: string }>) {
-          obj[row.key] = row.value;
+          if (SETTINGS_SECRET_PATTERN.test(row.key) && row.value) {
+            obj[row.key] = SETTINGS_SECRET_PLACEHOLDER;
+          } else {
+            obj[row.key] = row.value;
+          }
         }
         return json(obj);
       }
@@ -704,6 +722,8 @@ export default {
       if (path === '/api/settings' && request.method === 'PUT') {
         const body = await request.json() as Record<string, string>;
         for (const [key, value] of Object.entries(body)) {
+          if (!ALLOWED_SETTINGS_KEYS.has(key)) continue; // reject unknown keys
+          if (value === SETTINGS_SECRET_PLACEHOLDER) continue; // preserve existing secret
           await env.DB.prepare(
             'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
           ).bind(key, value).run();
