@@ -248,6 +248,70 @@ Yes. Go to Settings > MCP Servers, add a server URL (any Cloudflare Worker with 
 
 ---
 
+## Updating Haven
+
+Haven is self-hosted — your Worker doesn't update automatically when new patches land on `main`. You have to pull and redeploy.
+
+**Worker (backend):**
+```bash
+cd worker
+git pull origin main
+npx wrangler deploy
+```
+
+**Frontend (web):**
+```bash
+cd frontend
+git pull origin main
+npm install
+npm run build
+npx wrangler pages deploy dist
+```
+
+**Android APK:**
+Download the latest APK from the [Releases page](https://github.com/amarisaster/Haven/releases) and install over your existing copy. Haven signs releases with a stable debug keystore, so updates install in-place without needing to uninstall first.
+
+If your Worker is an older version than your frontend, you'll see 404s on newer endpoints. Always redeploy the Worker when upgrading.
+
+---
+
+## Troubleshooting
+
+If something breaks, it's almost always one of these. Error codes come from your Worker's response, your AI provider, or Cloudflare's edge.
+
+**`Unexpected token '<', "<!doctype "... is not valid JSON`**
+Your Worker URL isn't configured or is pointing at the frontend instead of the API. Go to Settings → Haven Worker URL and paste your `https://your-worker.workers.dev`. Fixed in v1.6.1 — the setup wizard asks for this on first launch.
+
+**404 Not Found**
+The endpoint doesn't exist on the Worker you deployed. Almost always means your Worker is running older code than your frontend expects. Pull and redeploy the Worker (see [Updating Haven](#updating-haven) above).
+
+**401 Unauthorized / "Invalid API key"**
+Your AI provider API key is missing, wrong, or revoked. Go to Settings → Connect and re-paste it. For OpenRouter, verify the key at [openrouter.ai/keys](https://openrouter.ai/keys). If the key starts with `sk-or-` it's OpenRouter; `sk-ant-` is Anthropic direct; `hf_` is Hugging Face. Haven auto-detects which is which.
+
+**403 Forbidden**
+The provider accepted the key but rejected this request. Usually means an account-level restriction — geo-block, payment problem, or the model is gated behind paid tier / verification. Check your provider's dashboard.
+
+**429 Too Many Requests**
+Rate limit. On OpenRouter's free tier this hits after about 20 requests per minute or when the daily quota is exhausted. Wait it out, switch to a paid model, or add credit to your account. Models ending in `:free` have stricter per-account limits than paid ones.
+
+**500 Internal Server Error**
+Worker crashed. Check Cloudflare dashboard → Workers & Pages → your worker → **Logs** for the real error. Most common cause: the D1 database is missing a table a newer code path expects — usually fixes itself on first write, but check the log for a specific `no such table` or `no such column` error.
+
+**502 / 503 / 504**
+Upstream is down or timed out. Cloudflare Workers have a 30-second CPU limit and 60-second wall-clock limit, so very long generations can exceed that. Try a smaller model or a shorter prompt. Otherwise check your provider's status page — GPT, Claude, and OpenRouter all have outages sometimes.
+
+**MCP: "Discovery failed" / "Connected, but server reported zero tools"**
+The Worker reached your MCP server but the handshake didn't return usable tools. The red text next to the server in Settings (v1.6.1+) shows the exact reason. Common ones:
+- URL needs the `/mcp` path (e.g. `https://your-worker.workers.dev/mcp`, not just the domain)
+- Auth header format mismatch — MCP servers expect `Authorization: Bearer <token>`
+- The MCP server uses a different transport (SSE, stdio) than the Streamable HTTP that Haven speaks
+- Server returned `protocolVersion` mismatch — usually fine, but some strict servers reject
+
+**MCP shows green tools but the companion never uses them**
+The model you picked doesn't support function calling. Some OpenRouter free models silently ignore the `tools` parameter. Switch to a model explicitly marked as tool-capable — most Claude models, GPT-4 variants, Gemini 1.5+, and Mistral Large work. If in doubt, ask the companion "what tools do you have?" — if it invents tools instead of listing real ones, the model isn't seeing them.
+
+---
+
 ## Recent updates
 
 **v1.6.1** — Self-Hosted Setup Fix + Unified Media Rendering
