@@ -35,6 +35,7 @@ interface McpServer {
   api_key: string | null;
   enabled: number;
   tools_cache: string | null;
+  last_discovered: string | null;
 }
 
 interface McpTool {
@@ -60,8 +61,21 @@ async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
     }),
   });
 
+  if (!initResp.ok) {
+    const errBody = await initResp.text().catch(() => '');
+    throw new Error(`initialize failed ${initResp.status}: ${errBody.slice(0, 200)}`);
+  }
+
   const sessionId = initResp.headers.get('mcp-session-id');
   if (sessionId) headers['mcp-session-id'] = sessionId;
+
+  // MCP spec requires a notifications/initialized message after initialize
+  // before any other request. Strict servers reject tools/list without it.
+  await fetch(server.url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  });
 
   // List tools
   const listResp = await fetch(server.url, {
@@ -69,6 +83,11 @@ async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   });
+
+  if (!listResp.ok) {
+    const errBody = await listResp.text().catch(() => '');
+    throw new Error(`tools/list failed ${listResp.status}: ${errBody.slice(0, 200)}`);
+  }
 
   const listData = await listResp.json() as any;
   const tools = listData?.result?.tools || [];
@@ -99,6 +118,12 @@ async function executeMcpTool(
   });
   const sessionId = initResp.headers.get('mcp-session-id');
   if (sessionId) headers['mcp-session-id'] = sessionId;
+
+  // MCP spec requires notifications/initialized before other requests
+  await fetch(serverUrl, {
+    method: 'POST', headers,
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+  });
 
   // Call tool
   const resp = await fetch(serverUrl, {
@@ -179,7 +204,7 @@ async function inferenceWithTools(
   if (provider === 'ollama') {
     url = `${baseOllamaUrl}/v1/chat/completions`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai'].includes(detectedProvider || '')) {
+  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
     url = `${customBaseUrl}/chat/completions`;
     headers['Authorization'] = `Bearer ${customKey}`;
   } else {
@@ -345,7 +370,7 @@ async function* streamInference(
   if (provider === 'ollama') {
     url = `${baseOllamaUrl}/v1/chat/completions`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai'].includes(detectedProvider || '')) {
+  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
     url = `${customBaseUrl}/chat/completions`;
     headers['Authorization'] = `Bearer ${customKey}`;
   } else {

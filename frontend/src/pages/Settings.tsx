@@ -809,6 +809,7 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
   const [adding, setAdding] = useState(false);
   const [discovering, setDiscovering] = useState<number | null>(null);
   const [toolCount, setToolCount] = useState<Record<number, number>>({});
+  const [discoverError, setDiscoverError] = useState<Record<number, string>>({});
   const [expanded, setExpanded] = useState(false);
 
   const loadServers = async () => {
@@ -846,17 +847,25 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
 
   const handleDiscover = async (id: number) => {
     setDiscovering(id);
+    setDiscoverError(prev => { const n = { ...prev }; delete n[id]; return n; });
     try {
       const resp = await fetch(`${apiUrl}/api/mcp-servers/discover`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
+      const data = await resp.json().catch(() => ({}));
       if (resp.ok) {
-        const data = await resp.json();
         setToolCount(prev => ({ ...prev, [id]: data.tools?.length || 0 }));
+        if ((data.tools?.length || 0) === 0) {
+          setDiscoverError(prev => ({ ...prev, [id]: 'Connected, but server reported zero tools.' }));
+        }
+      } else {
+        setDiscoverError(prev => ({ ...prev, [id]: data.error || `Discovery failed (HTTP ${resp.status})` }));
       }
-    } catch {} finally { setDiscovering(null); }
+    } catch (e) {
+      setDiscoverError(prev => ({ ...prev, [id]: e instanceof Error ? e.message : 'Network error' }));
+    } finally { setDiscovering(null); }
   };
 
   const sectionStyle = { marginBottom: '24px', padding: '16px', background: 'var(--haven-card)', borderRadius: '12px', border: '1px solid var(--haven-border)' };
@@ -886,8 +895,11 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '13px', color: 'var(--haven-text)', fontWeight: 500 }}>{s.name}</div>
                 <div style={{ fontSize: '10px', color: 'var(--haven-text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.url}</div>
-                {toolCount[s.id] !== undefined && (
+                {toolCount[s.id] !== undefined && !discoverError[s.id] && (
                   <div style={{ fontSize: '10px', color: '#4ade80' }}>{toolCount[s.id]} tools discovered</div>
+                )}
+                {discoverError[s.id] && (
+                  <div style={{ fontSize: '10px', color: '#f87171', wordBreak: 'break-word' }}>{discoverError[s.id]}</div>
                 )}
               </div>
               <button onClick={() => handleDiscover(s.id)} disabled={discovering === s.id} style={{ background: 'none', border: '1px solid var(--haven-border)', borderRadius: '6px', padding: '3px 8px', fontSize: '10px', color: 'var(--haven-text-muted)', cursor: 'pointer' }}>
