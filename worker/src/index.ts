@@ -45,25 +45,83 @@ interface McpTool {
   server_id: number;
   server_url: string;
   server_key: string | null;
+  // Which MCP transport this server uses. Omitted for tools cached before
+  // v1.6.3 — those default to 'streamable' at the use sites.
+  transport?: 'streamable' | 'sse';
 }
 
-async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
+// ---- SSE helpers ----
+
+type SSEEvent = { event: string; data: string };
+
+function parseSSEBuffer(buffer: string): { events: SSEEvent[]; remaining: string } {
+  const events: SSEEvent[] = [];
+  // Events are separated by blank lines. SSE technically allows \r\n\r\n too;
+  // normalize first.
+  const normalized = buffer.replace(/\r\n/g, '\n');
+  const parts = normalized.split('\n\n');
+  const remaining = parts.pop() || '';
+  for (const part of parts) {
+    let evName = 'message';
+    const dataLines: string[] = [];
+    for (const line of part.split('\n')) {
+      if (line.startsWith('event:')) evName = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+      // We ignore id: and retry: for our purposes.
+    }
+    if (dataLines.length > 0) events.push({ event: evName, data: dataLines.join('\n') });
+  }
+  return { events, remaining };
+}
+
+async function readSSEUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  initialBuffer: string,
+  predicate: (event: SSEEvent) => boolean,
+  timeoutMs = 15000,
+): Promise<{ event: SSEEvent; buffer: string }> {
+  let buffer = initialBuffer;
+  // First, check if the initial buffer already contains a match.
+  {
+    const { events, remaining } = parseSSEBuffer(buffer);
+    buffer = remaining;
+    for (const ev of events) {
+      if (predicate(ev)) return { event: ev, buffer };
+    }
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error('SSE stream closed before expected event');
+    buffer += decoder.decode(value, { stream: true });
+    const { events, remaining } = parseSSEBuffer(buffer);
+    buffer = remaining;
+    for (const ev of events) {
+      if (predicate(ev)) return { event: ev, buffer };
+    }
+  }
+  throw new Error(`SSE read timeout after ${timeoutMs}ms`);
+}
+
+// ---- Streamable HTTP transport (MCP 2024-11-05 spec — single POST endpoint) ----
+
+async function discoverViaStreamableHTTP(server: McpServer): Promise<McpTool[]> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (server.api_key) headers['Authorization'] = `Bearer ${server.api_key}`;
 
-  // Initialize MCP session
   const initResp = await fetch(server.url, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.4.0' } },
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
     }),
   });
 
   if (!initResp.ok) {
     const errBody = await initResp.text().catch(() => '');
-    throw new Error(`initialize failed ${initResp.status}: ${errBody.slice(0, 200)}`);
+    throw new Error(`streamable initialize ${initResp.status}: ${errBody.slice(0, 200)}`);
   }
 
   const sessionId = initResp.headers.get('mcp-session-id');
@@ -72,26 +130,22 @@ async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
   // MCP spec requires a notifications/initialized message after initialize
   // before any other request. Strict servers reject tools/list without it.
   await fetch(server.url, {
-    method: 'POST',
-    headers,
+    method: 'POST', headers,
     body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
   });
 
-  // List tools
   const listResp = await fetch(server.url, {
-    method: 'POST',
-    headers,
+    method: 'POST', headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   });
 
   if (!listResp.ok) {
     const errBody = await listResp.text().catch(() => '');
-    throw new Error(`tools/list failed ${listResp.status}: ${errBody.slice(0, 200)}`);
+    throw new Error(`streamable tools/list ${listResp.status}: ${errBody.slice(0, 200)}`);
   }
 
   const listData = await listResp.json() as any;
   const tools = listData?.result?.tools || [];
-
   return tools.map((t: any) => ({
     name: t.name,
     description: t.description || '',
@@ -99,33 +153,31 @@ async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
     server_id: server.id,
     server_url: server.url,
     server_key: server.api_key,
+    transport: 'streamable' as const,
   }));
 }
 
-async function executeMcpTool(
-  serverUrl: string, serverKey: string | null, toolName: string, args: Record<string, unknown>
+async function executeViaStreamableHTTP(
+  serverUrl: string, serverKey: string | null, toolName: string, args: Record<string, unknown>,
 ): Promise<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (serverKey) headers['Authorization'] = `Bearer ${serverKey}`;
 
-  // Initialize
   const initResp = await fetch(serverUrl, {
     method: 'POST', headers,
     body: JSON.stringify({
       jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.4.0' } },
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
     }),
   });
   const sessionId = initResp.headers.get('mcp-session-id');
   if (sessionId) headers['mcp-session-id'] = sessionId;
 
-  // MCP spec requires notifications/initialized before other requests
   await fetch(serverUrl, {
     method: 'POST', headers,
     body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
   });
 
-  // Call tool
   const resp = await fetch(serverUrl, {
     method: 'POST', headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: toolName, arguments: args } }),
@@ -134,6 +186,168 @@ async function executeMcpTool(
   const data = await resp.json() as any;
   const content = data?.result?.content || [];
   return content.map((c: any) => c.text || '').join('\n') || JSON.stringify(data?.result || {});
+}
+
+// ---- HTTP+SSE transport (older MCP — GET opens event stream, POST sends requests) ----
+
+async function openSSESession(serverUrl: string, serverKey: string | null): Promise<{
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  decoder: TextDecoder;
+  buffer: string;
+  endpointUrl: string;
+  postHeaders: Record<string, string>;
+}> {
+  const sseHeaders: Record<string, string> = { 'Accept': 'text/event-stream' };
+  if (serverKey) sseHeaders['Authorization'] = `Bearer ${serverKey}`;
+
+  const sseResp = await fetch(serverUrl, { headers: sseHeaders });
+  if (!sseResp.ok || !sseResp.body) {
+    const errBody = await sseResp.text().catch(() => '');
+    throw new Error(`sse connect ${sseResp.status}: ${errBody.slice(0, 200)}`);
+  }
+  const contentType = sseResp.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    // Not an SSE endpoint — close and bail
+    try { await sseResp.body.cancel(); } catch {}
+    throw new Error(`sse expected event-stream, got ${contentType || 'unknown'}`);
+  }
+
+  const reader = sseResp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  // The first event from an SSE MCP server is `event: endpoint` with the
+  // relative POST path in its data field.
+  const endpointRead = await readSSEUntil(
+    reader, decoder, buffer,
+    (e) => e.event === 'endpoint',
+  );
+  buffer = endpointRead.buffer;
+  const endpointUrl = new URL(endpointRead.event.data.trim(), serverUrl).toString();
+
+  const postHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (serverKey) postHeaders['Authorization'] = `Bearer ${serverKey}`;
+
+  return { reader, decoder, buffer, endpointUrl, postHeaders };
+}
+
+async function readSSEJsonRpc(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  buffer: string,
+  id: number,
+): Promise<{ data: any; buffer: string }> {
+  const read = await readSSEUntil(reader, decoder, buffer,
+    (e) => {
+      try { return JSON.parse(e.data).id === id; } catch { return false; }
+    },
+  );
+  return { data: JSON.parse(read.event.data), buffer: read.buffer };
+}
+
+async function discoverViaSSE(server: McpServer): Promise<McpTool[]> {
+  const session = await openSSESession(server.url, server.api_key);
+  let buffer = session.buffer;
+  try {
+    // initialize
+    await fetch(session.endpointUrl, {
+      method: 'POST', headers: session.postHeaders,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
+      }),
+    });
+    const initRead = await readSSEJsonRpc(session.reader, session.decoder, buffer, 1);
+    buffer = initRead.buffer;
+
+    // notifications/initialized (no response expected)
+    await fetch(session.endpointUrl, {
+      method: 'POST', headers: session.postHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    });
+
+    // tools/list
+    await fetch(session.endpointUrl, {
+      method: 'POST', headers: session.postHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+    });
+    const toolsRead = await readSSEJsonRpc(session.reader, session.decoder, buffer, 2);
+
+    const tools = toolsRead.data?.result?.tools || [];
+    return tools.map((t: any) => ({
+      name: t.name,
+      description: t.description || '',
+      inputSchema: t.inputSchema || { type: 'object', properties: {} },
+      server_id: server.id,
+      server_url: server.url,
+      server_key: server.api_key,
+      transport: 'sse' as const,
+    }));
+  } finally {
+    session.reader.cancel().catch(() => {});
+  }
+}
+
+async function executeViaSSE(
+  serverUrl: string, serverKey: string | null, toolName: string, args: Record<string, unknown>,
+): Promise<string> {
+  const session = await openSSESession(serverUrl, serverKey);
+  let buffer = session.buffer;
+  try {
+    await fetch(session.endpointUrl, {
+      method: 'POST', headers: session.postHeaders,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
+      }),
+    });
+    const initRead = await readSSEJsonRpc(session.reader, session.decoder, buffer, 1);
+    buffer = initRead.buffer;
+
+    await fetch(session.endpointUrl, {
+      method: 'POST', headers: session.postHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    });
+
+    await fetch(session.endpointUrl, {
+      method: 'POST', headers: session.postHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: toolName, arguments: args } }),
+    });
+    const callRead = await readSSEJsonRpc(session.reader, session.decoder, buffer, 2);
+
+    const content = callRead.data?.result?.content || [];
+    return content.map((c: any) => c.text || '').join('\n') || JSON.stringify(callRead.data?.result || {});
+  } finally {
+    session.reader.cancel().catch(() => {});
+  }
+}
+
+// ---- Transport dispatcher ----
+//
+// Try Streamable HTTP first. If it fails, fall back to SSE. If both fail,
+// surface the more diagnostic error so users can tell whether their server
+// is reachable at all vs. speaking a different protocol.
+
+async function discoverMcpTools(server: McpServer): Promise<McpTool[]> {
+  let streamableErr: unknown;
+  try {
+    return await discoverViaStreamableHTTP(server);
+  } catch (e) {
+    streamableErr = e;
+  }
+  try {
+    return await discoverViaSSE(server);
+  } catch (sseErr) {
+    throw new Error(`streamable http: ${streamableErr}. sse: ${sseErr}`);
+  }
+}
+
+async function executeMcpTool(
+  serverUrl: string, serverKey: string | null, toolName: string,
+  args: Record<string, unknown>, transport: 'streamable' | 'sse' = 'streamable',
+): Promise<string> {
+  if (transport === 'sse') return executeViaSSE(serverUrl, serverKey, toolName, args);
+  return executeViaStreamableHTTP(serverUrl, serverKey, toolName, args);
 }
 
 function mcpToolsToOpenAI(tools: McpTool[]): any[] {
@@ -248,7 +462,10 @@ async function inferenceWithTools(
       if (toolInfo) {
         try {
           const args = JSON.parse(fn.arguments || '{}');
-          result = await executeMcpTool(toolInfo.server_url, toolInfo.server_key, fn.name, args);
+          result = await executeMcpTool(
+            toolInfo.server_url, toolInfo.server_key, fn.name, args,
+            toolInfo.transport || 'streamable',
+          );
         } catch (e) {
           result = `Tool error: ${e}`;
         }

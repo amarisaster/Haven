@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.6.2-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.6.3-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -313,6 +313,12 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.6.3** — MCP SSE Transport Support
+
+- **MCP servers using the older HTTP+SSE transport now work.** Haven's Worker previously only spoke the newer Streamable HTTP transport (single POST endpoint). A lot of MCP servers deployed on Cloudflare Workers — especially ones scaffolded with older `@modelcontextprotocol/sdk` templates using `SSEServerTransport` — still use the two-channel SSE protocol (GET for the event stream, POST to a discovered `endpoint` path for requests). Haven now auto-detects which transport your server speaks: tries Streamable HTTP first, falls back to SSE. Both `discoverMcpTools` and `executeMcpTool` support SSE.
+- **Transport is remembered per tool in the cache**, so tool execution doesn't re-probe — the worker knows which protocol to use for each server.
+- **If both transports fail** the error message now reports both failures so you can tell whether the server is simply unreachable vs. speaking something else entirely.
 
 **v1.6.2** — MCP Connector Reliability + Self-Hosting Hardening
 
