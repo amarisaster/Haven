@@ -32,7 +32,14 @@ export function saveTTSSettings(settings: Partial<TTSSettings>) {
 }
 
 export function getBrowserVoices(): SpeechSynthesisVoice[] {
-  return speechSynthesis.getVoices();
+  // Web Speech API isn't universally present in Android WebView; returning an
+  // empty list keeps callers from throwing on undefined.
+  if (typeof speechSynthesis === 'undefined') return [];
+  try {
+    return speechSynthesis.getVoices();
+  } catch {
+    return [];
+  }
 }
 
 let currentAudio: HTMLAudioElement | null = null;

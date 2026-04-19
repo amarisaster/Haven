@@ -53,6 +53,10 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   useEffect(() => {
     const loadVoices = () => setVoices(getBrowserVoices());
     loadVoices();
+    // Some Android WebView builds don't expose speechSynthesis; without this
+    // guard, addEventListener throws in the effect and React 18 unmounts the
+    // whole Settings component — that's the "black void" Settings bug.
+    if (typeof speechSynthesis === 'undefined') return;
     speechSynthesis.addEventListener('voiceschanged', loadVoices);
     return () => speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
@@ -608,6 +612,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             </select>
             <button
               onClick={() => {
+                if (typeof speechSynthesis === 'undefined') return;
                 const u = new SpeechSynthesisUtterance('Hello, this is how I sound.');
                 const match = voices.find(v => v.name === browserVoice);
                 if (match) u.voice = match;
