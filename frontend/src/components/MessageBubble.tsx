@@ -335,7 +335,17 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               {message.image && (
                 <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
               )}
-              {isStreaming && (
+              {isStreaming && !message.content && (
+                // Typing indicator — shown while waiting for the first token
+                // to arrive. Three dots pulsing in sequence.
+                <span style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', padding: '4px 0' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--haven-text-muted)', animation: 'haven-typing 1.2s infinite ease-in-out both' }} />
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--haven-text-muted)', animation: 'haven-typing 1.2s infinite ease-in-out both', animationDelay: '0.15s' }} />
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--haven-text-muted)', animation: 'haven-typing 1.2s infinite ease-in-out both', animationDelay: '0.3s' }} />
+                  <style>{`@keyframes haven-typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }`}</style>
+                </span>
+              )}
+              {isStreaming && message.content && (
                 <span
                   style={{
                     display: 'inline-block', width: '2px', height: '1em',
@@ -377,6 +387,36 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
             </span>
           )}
         </div>
+
+        {/* Tool call chips — small pills showing which MCP tools fired during
+            this response. Failed calls get a muted / strikethrough look so
+            "tried and errored" is visible without the whole row feeling busy. */}
+        {isCompanion && message.tool_calls && message.tool_calls.length > 0 && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: '4px',
+            marginTop: '4px',
+            justifyContent: isUser ? 'flex-end' : 'flex-start',
+          }}>
+            {message.tool_calls.map((tc, i) => (
+              <span
+                key={i}
+                title={tc.server ? `${tc.server} · ${tc.name}` : tc.name}
+                style={{
+                  fontSize: '10px',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  background: tc.ok === false ? 'transparent' : 'var(--haven-card)',
+                  border: `1px solid ${tc.ok === false ? '#f8717155' : 'var(--haven-border)'}`,
+                  color: tc.ok === false ? '#f87171' : 'var(--haven-accent)',
+                  opacity: tc.ok === false ? 0.7 : 1,
+                  textDecoration: tc.ok === false ? 'line-through' : 'none',
+                }}
+              >
+                🔧 {tc.name}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Action bar */}
         {showActions && !editing && (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Message } from '../lib/types';
+import type { Message, ToolCallRecord } from '../lib/types';
 import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
@@ -108,6 +108,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let currentThreadId = threadId;
     let fullContent = '';
     let responseModel = '';
+    let toolCalls: ToolCallRecord[] = [];
 
     try {
       for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image)) {
@@ -124,6 +125,18 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               setStreamingContent(fullContent);
             }
             break;
+          case 'tools': {
+            // Worker emits one event with all tool results at the end of a
+            // tool-calling inference round. We map each to a compact record
+            // (name + ok) for rendering as chips under the assistant bubble.
+            const results = (event.results as any[]) || [];
+            toolCalls = results.map(r => ({
+              name: r?.name || r?.tool_name || 'tool',
+              server: r?.server_name || r?.server,
+              ok: r?.ok !== false && !r?.error,
+            }));
+            break;
+          }
           case 'reaction': {
             const emoji = (event as any).emoji || '❤️';
             setMessages(prev => {
@@ -159,6 +172,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         role: 'companion',
         content: fullContent,
         model: responseModel || selectedModel,
+        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, companionMsg]);

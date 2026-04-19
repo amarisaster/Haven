@@ -5,6 +5,12 @@ export interface Thread {
   created_at: string;
 }
 
+export interface ToolCallRecord {
+  name: string;   // e.g. "store_memory", "wren_diary_store"
+  server?: string; // which MCP server it came from, if known
+  ok?: boolean;   // whether the call succeeded
+}
+
 export interface Message {
   id: string;
   thread_id: string;
@@ -13,6 +19,7 @@ export interface Message {
   image?: string;
   model?: string;
   reactions?: string[];
+  tool_calls?: ToolCallRecord[];
   created_at: string;
 }
 

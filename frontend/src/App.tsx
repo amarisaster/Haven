@@ -11,15 +11,34 @@ import UpdateBanner from './components/UpdateBanner';
 
 type View = 'grid' | 'threads' | 'chat' | 'settings';
 
+// Persist view + activeThreadId across refreshes so hitting F5 inside a
+// chat thread lands you back in that same thread instead of the grid.
+const LS_VIEW = 'haven-view';
+const LS_THREAD = 'haven-active-thread';
+
+function readStoredView(): View {
+  const v = localStorage.getItem(LS_VIEW);
+  if (v === 'grid' || v === 'threads' || v === 'chat' || v === 'settings') return v;
+  return 'grid';
+}
+
 export default function App() {
-  const [view, setView] = useState<View>('grid');
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [view, setView] = useState<View>(() => readStoredView());
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(() => localStorage.getItem(LS_THREAD));
   const [companionName, setCompanionName] = useState('');
   const [companionAvatar, setCompanionAvatar] = useState('');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showAddCompanion, setShowAddCompanion] = useState(false);
   const [loaded, setLoaded] = useState(false);
+
+  // Persist on every change. Null thread clears the key so a fresh "new
+  // chat" doesn't resurrect a deleted thread on next refresh.
+  useEffect(() => { localStorage.setItem(LS_VIEW, view); }, [view]);
+  useEffect(() => {
+    if (activeThreadId) localStorage.setItem(LS_THREAD, activeThreadId);
+    else localStorage.removeItem(LS_THREAD);
+  }, [activeThreadId]);
 
   // Fetch companion data for the active companion id (from localStorage).
   const refreshActiveCompanion = useCallback(async () => {

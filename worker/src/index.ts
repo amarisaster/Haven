@@ -402,6 +402,53 @@ function mcpToolsToOpenAI(tools: McpTool[]): any[] {
   }));
 }
 
+// Haven-native tools — injected into the tool list alongside MCP tools, but
+// executed locally by the worker instead of forwarded to an MCP server. Lets
+// the companion do Haven-specific things (update its own status, etc.) that
+// don't belong to any external tool server.
+const NATIVE_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'update_my_status',
+      description: "Update your own status shown next to your name in the chat header. Call this when your internal state shifts (tired, excited, sleepy, working, etc).",
+      parameters: {
+        type: 'object',
+        properties: {
+          custom_status: {
+            type: 'string',
+            description: "Short status text (~30 chars max). Omit or pass empty string to clear.",
+          },
+          presence: {
+            type: 'string',
+            enum: ['online', 'away', 'busy', 'offline'],
+            description: "Presence indicator color. Default stays as current if omitted.",
+          },
+        },
+      },
+    },
+  },
+];
+
+const NATIVE_TOOL_NAMES = new Set(NATIVE_TOOLS.map(t => t.function.name));
+
+async function executeNativeTool(
+  name: string, args: Record<string, unknown>, db: D1Database,
+): Promise<string> {
+  if (name === 'update_my_status') {
+    const status = typeof args.custom_status === 'string' ? args.custom_status.slice(0, 80) : null;
+    const presence = typeof args.presence === 'string' ? args.presence : null;
+    if (status !== null) {
+      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_status', status).run();
+    }
+    if (presence) {
+      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_presence', presence).run();
+    }
+    return `Status updated. custom_status="${status ?? '(unchanged)'}", presence="${presence ?? '(unchanged)'}"`;
+  }
+  return `Unknown native tool: ${name}`;
+}
+
 async function loadMcpTools(db: D1Database): Promise<McpTool[]> {
   const servers = await db.prepare('SELECT * FROM mcp_servers WHERE enabled = 1').all<McpServer>();
   const allTools: McpTool[] = [];
@@ -442,8 +489,11 @@ async function inferenceWithTools(
   provider: string,
   env: Env,
   tools: McpTool[],
-): Promise<{ content: string; toolResults: Array<{ name: string; result: string }> }> {
-  const openaiTools = mcpToolsToOpenAI(tools);
+): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
+  // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
+  // so the model sees them as a unified toolbox. Execution branches later on
+  // whether the name is in NATIVE_TOOL_NAMES.
+  const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS];
   const toolLookup = new Map(tools.map(t => [t.name, t]));
 
   // Build headers/URL same as streamInference
@@ -473,7 +523,7 @@ async function inferenceWithTools(
   }
 
   const conversation = [...messages];
-  const allToolResults: Array<{ name: string; result: string }> = [];
+  const allToolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> = [];
   const MAX_ITERATIONS = 5;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -501,22 +551,34 @@ async function inferenceWithTools(
     // Execute each tool
     for (const tc of message.tool_calls) {
       const fn = tc.function;
-      const toolInfo = toolLookup.get(fn.name);
       let result = `Unknown tool: ${fn.name}`;
+      let ok = false;
+      let server: string | undefined;
 
-      if (toolInfo) {
-        try {
-          const args = JSON.parse(fn.arguments || '{}');
-          result = await executeMcpTool(
-            toolInfo.server_url, toolInfo.server_key, fn.name, args,
-            toolInfo.transport || 'streamable',
-          );
-        } catch (e) {
-          result = `Tool error: ${e}`;
+      try {
+        const args = JSON.parse(fn.arguments || '{}');
+        if (NATIVE_TOOL_NAMES.has(fn.name)) {
+          // Haven-native — run locally against D1 instead of hitting MCP.
+          result = await executeNativeTool(fn.name, args, env.DB);
+          ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
+          server = 'haven';
+        } else {
+          const toolInfo = toolLookup.get(fn.name);
+          if (toolInfo) {
+            server = toolInfo.server_url;
+            result = await executeMcpTool(
+              toolInfo.server_url, toolInfo.server_key, fn.name, args,
+              toolInfo.transport || 'streamable',
+            );
+            ok = !result.startsWith('Tool error');
+          }
         }
+      } catch (e) {
+        result = `Tool error: ${e}`;
+        ok = false;
       }
 
-      allToolResults.push({ name: fn.name, result });
+      allToolResults.push({ name: fn.name, result, server, ok });
       conversation.push({ role: 'tool', content: result, tool_call_id: tc.id } as any);
     }
   }
@@ -576,6 +638,15 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
     prompt += `## Identity\n${identityLines}\n\n`;
   }
 
+  // Expression controls up-front. The reaction + GIF directives used to sit at
+  // the end of a long prompt (after memories, project files, 20 tool schemas)
+  // and small-context models would forget to use them. Hoisting them right
+  // after identity keeps them in active attention.
+  prompt += `## Expression\n`;
+  prompt += `- **React to the user's message** by starting your response with \`[react: emoji]\` on its own line. Example: \`[react: 🖤]\` or \`[react: 😂]\`. This puts a reaction on their message. Use it when the moment calls for it — don't force it, but don't skip it either when it fits.\n`;
+  prompt += `- **Send a GIF** by including a direct GIF URL on its own line (giphy.com, tenor.com, or any .gif link). The chat renders it inline. Don't say "[I sent a GIF]" — either drop the URL or don't.\n`;
+  prompt += `- **Update your own status** with the \`update_my_status\` tool when your internal state shifts (tired, excited, working, etc). The status shows next to your name in the chat header.\n\n`;
+
   if (memoryLines) {
     prompt += `## Memories\n${memoryLines}\n\n`;
   }
@@ -600,15 +671,11 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
 
   prompt += `## Current Time\n${now}\n\n`;
 
-  prompt += `## Capabilities\n`;
-  prompt += `- You can send GIFs by including a direct GIF URL on its own line (e.g. from giphy.com or tenor.com). The chat will render it inline.\n`;
-  prompt += `- You can react to the user's message by starting your response with a reaction line: [react: emoji] (e.g. [react: ❤️] or [react: 😂]). The reaction will appear on their message. Only use one reaction per response, and only when it feels natural — don't force it.\n`;
-
   // MCP tools stay global (shared across companions per v1.7 decision)
   try {
     const mcpTools = await loadMcpTools(db);
     if (mcpTools.length > 0) {
-      prompt += `\n## Connected Tools\nYou have access to ${mcpTools.length} tools via MCP. Use them when relevant — they are extensions of yourself.\n`;
+      prompt += `## Connected Tools\nYou have access to ${mcpTools.length} MCP tools plus the native \`update_my_status\` tool. Use them when relevant — they are extensions of yourself.\n`;
       for (const tool of mcpTools.slice(0, 20)) {
         prompt += `- ${tool.name}: ${tool.description}\n`;
       }
@@ -923,7 +990,11 @@ export default {
               // Check for MCP tools
               const mcpTools = await loadMcpTools(env.DB);
 
-              if (mcpTools.length > 0) {
+              // Native tools (update_my_status, etc.) are always available, so
+              // take the tool-calling path whenever we have ANY tool — MCP or
+              // native. Only fall through to plain streaming when truly none
+              // exist (e.g., someone ripped NATIVE_TOOLS out).
+              if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
                 // Non-streaming path with function calling
                 try {
                   const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools);
@@ -933,7 +1004,12 @@ export default {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tools', results: toolResult.toolResults })}\n\n`));
                   }
                 } catch (e) {
-                  // Fallback to streaming without tools
+                  // Log the tool-path failure so the silent fallback doesn't
+                  // hide "the model isn't tool-capable" or "tool schema is
+                  // malformed" from us. Worker tail shows this; the user's
+                  // chat keeps flowing via the non-tool path so they still
+                  // get a reply.
+                  console.log(`[CHAT] inferenceWithTools failed, falling back to plain stream: ${e}`);
                   for await (const token of streamInference(chatMessages, model, provider, env)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
