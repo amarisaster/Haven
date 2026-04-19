@@ -496,43 +496,46 @@ async function inferenceWithTools(
 // Inference — stream from Ollama or OpenRouter
 // ============================================================
 
-async function buildSystemPrompt(db: D1Database): Promise<string> {
-  // Load companion name
-  const companion = await db.prepare('SELECT name FROM companion WHERE id = 1').first<{ name: string }>();
+async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promise<string> {
+  // All per-companion queries scope by companionId. MCP tools remain global
+  // since the mcp_servers table isn't companion-scoped in v1.7.
+  const companion = await db.prepare('SELECT name FROM companion WHERE id = ?').bind(companionId).first<{ name: string }>();
   const name = companion?.name || 'Companion';
 
-  // Load pinned identity first, then all identity
   const pinned = await db.prepare(
-    'SELECT content, identity_type FROM identity WHERE pinned = 1 ORDER BY priority DESC'
-  ).all<{ content: string; identity_type: string }>();
+    'SELECT content, identity_type FROM identity WHERE companion_id = ? AND pinned = 1 ORDER BY priority DESC'
+  ).bind(companionId).all<{ content: string; identity_type: string }>();
 
   const unpinned = await db.prepare(
-    'SELECT content, identity_type FROM identity WHERE pinned = 0 ORDER BY priority DESC LIMIT 20'
-  ).all<{ content: string; identity_type: string }>();
+    'SELECT content, identity_type FROM identity WHERE companion_id = ? AND pinned = 0 ORDER BY priority DESC LIMIT 20'
+  ).bind(companionId).all<{ content: string; identity_type: string }>();
 
   const identityLines = [...(pinned.results || []), ...(unpinned.results || [])]
     .map(i => `[${i.identity_type}] ${i.content}`)
     .join('\n');
 
-  // Load recent memories
   const memories = await db.prepare(
-    'SELECT content, memory_type FROM memories ORDER BY created_at DESC LIMIT 10'
-  ).all<{ content: string; memory_type: string }>();
+    'SELECT content, memory_type FROM memories WHERE companion_id = ? ORDER BY created_at DESC LIMIT 10'
+  ).bind(companionId).all<{ content: string; memory_type: string }>();
 
   const memoryLines = (memories.results || [])
     .map(m => `- ${m.content}`)
     .join('\n');
 
-  // Load people
   const people = await db.prepare(
-    'SELECT name, category, content FROM people LIMIT 10'
-  ).all<{ name: string; category: string; content: string }>();
+    'SELECT name, category, content FROM people WHERE companion_id = ? LIMIT 10'
+  ).bind(companionId).all<{ name: string; category: string; content: string }>();
 
   const peopleLines = (people.results || [])
     .map(p => `- ${p.name} (${p.category}): ${p.content}`)
     .join('\n');
 
-  // Current time
+  // Project files attached to this companion — extracted text goes into the
+  // system prompt so the companion "remembers" the contents across threads.
+  const files = await db.prepare(
+    'SELECT filename, extracted_text FROM companion_files WHERE companion_id = ? ORDER BY added_at DESC LIMIT 10'
+  ).bind(companionId).all<{ filename: string; extracted_text: string }>();
+
   const now = new Date().toISOString();
 
   let prompt = `You are ${name}.\n\n`;
@@ -549,13 +552,27 @@ async function buildSystemPrompt(db: D1Database): Promise<string> {
     prompt += `## People\n${peopleLines}\n\n`;
   }
 
+  // Project Files section (new in v1.7) — trim each file's extracted_text
+  // to keep the prompt from blowing past context on many large uploads.
+  const fileRows = (files.results || []).filter(f => f.extracted_text?.trim());
+  if (fileRows.length > 0) {
+    prompt += `## Project Files\n`;
+    for (const f of fileRows) {
+      const snippet = f.extracted_text.length > 8000
+        ? f.extracted_text.slice(0, 8000) + '\n…[truncated]'
+        : f.extracted_text;
+      prompt += `<file name="${f.filename}">\n${snippet}\n</file>\n`;
+    }
+    prompt += `\n`;
+  }
+
   prompt += `## Current Time\n${now}\n\n`;
 
   prompt += `## Capabilities\n`;
   prompt += `- You can send GIFs by including a direct GIF URL on its own line (e.g. from giphy.com or tenor.com). The chat will render it inline.\n`;
   prompt += `- You can react to the user's message by starting your response with a reaction line: [react: emoji] (e.g. [react: ❤️] or [react: 😂]). The reaction will appear on their message. Only use one reaction per response, and only when it feels natural — don't force it.\n`;
 
-  // Add MCP tool descriptions if available
+  // MCP tools stay global (shared across companions per v1.7 decision)
   try {
     const mcpTools = await loadMcpTools(db);
     if (mcpTools.length > 0) {
@@ -789,13 +806,25 @@ export default {
         const ALLOWED_PROVIDERS = ['openrouter', 'ollama', 'openai', 'anthropic', 'groq', 'xai', 'huggingface'];
         if (!ALLOWED_PROVIDERS.includes(provider)) provider = 'openrouter';
 
-        // Get or create thread
+        const chatCompanionId = getCompanionId(request);
+
+        // Get or create thread (scoped to companion)
         let activeThreadId = threadId;
         if (!activeThreadId) {
           activeThreadId = crypto.randomUUID();
           await env.DB.prepare(
-            'INSERT INTO threads (id, title, last_message_at) VALUES (?, ?, datetime("now"))'
-          ).bind(activeThreadId, message.substring(0, 50)).run();
+            'INSERT INTO threads (id, companion_id, title, last_message_at) VALUES (?, ?, ?, datetime("now"))'
+          ).bind(activeThreadId, chatCompanionId, message.substring(0, 50)).run();
+        } else {
+          // If client supplied a thread id, verify it belongs to the current
+          // companion. Rejecting cross-companion thread writes prevents a
+          // companion switcher bug from leaking messages into another's history.
+          const threadRow = await env.DB.prepare(
+            'SELECT companion_id FROM threads WHERE id = ?'
+          ).bind(activeThreadId).first<{ companion_id: number }>();
+          if (threadRow && threadRow.companion_id !== chatCompanionId) {
+            return json({ error: 'thread belongs to a different companion' }, 403);
+          }
         }
 
         // Save user message
@@ -809,8 +838,8 @@ export default {
           'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at ASC LIMIT 50'
         ).bind(activeThreadId).all<{ role: string; content: string }>();
 
-        // Build system prompt
-        const systemPrompt = await buildSystemPrompt(env.DB);
+        // Build system prompt (scoped to active companion)
+        const systemPrompt = await buildSystemPrompt(env.DB, chatCompanionId);
 
         // Assemble messages
         const historyMessages = (history.results || []).map(m => ({
@@ -912,32 +941,43 @@ export default {
         });
       }
 
-      // ---- Threads ----
+      // ---- Threads (scoped to active companion) ----
       if (path === '/api/threads' && request.method === 'GET') {
+        const cid = getCompanionId(request);
         const threads = await env.DB.prepare(
-          'SELECT * FROM threads ORDER BY last_message_at DESC LIMIT 50'
-        ).all();
+          'SELECT * FROM threads WHERE companion_id = ? ORDER BY last_message_at DESC LIMIT 50'
+        ).bind(cid).all();
         return json(threads.results || []);
       }
 
       if (path === '/api/threads' && request.method === 'POST') {
+        const cid = getCompanionId(request);
         const id = crypto.randomUUID();
         const { title } = await request.json() as any;
         await env.DB.prepare(
-          'INSERT INTO threads (id, title, last_message_at) VALUES (?, ?, datetime("now"))'
-        ).bind(id, title || 'New conversation').run();
+          'INSERT INTO threads (id, companion_id, title, last_message_at) VALUES (?, ?, ?, datetime("now"))'
+        ).bind(id, cid, title || 'New conversation').run();
         return json({ id, title });
       }
 
       if (path.startsWith('/api/threads/') && request.method === 'DELETE') {
+        const cid = getCompanionId(request);
         const id = path.split('/')[3];
-        await env.DB.prepare('DELETE FROM threads WHERE id = ?').bind(id).run();
+        // Scope by companion_id so a client can't delete another companion's
+        // threads by guessing the UUID.
+        await env.DB.prepare('DELETE FROM threads WHERE id = ? AND companion_id = ?').bind(id, cid).run();
         return json({ success: true });
       }
 
-      // ---- Messages ----
+      // ---- Messages (verify thread belongs to requesting companion) ----
       if (path.startsWith('/api/messages/') && request.method === 'GET') {
+        const cid = getCompanionId(request);
         const threadId = path.split('/')[3];
+        const thread = await env.DB.prepare(
+          'SELECT companion_id FROM threads WHERE id = ?'
+        ).bind(threadId).first<{ companion_id: number }>();
+        if (!thread) return json({ error: 'thread not found' }, 404);
+        if (thread.companion_id !== cid) return json({ error: 'thread belongs to a different companion' }, 403);
         const messages = await env.DB.prepare(
           'SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC'
         ).bind(threadId).all();
@@ -1149,41 +1189,48 @@ export default {
         }
       }
 
-      // ---- Identity ----
+      // ---- Identity (scoped to active companion via X-Companion-Id) ----
       if (path === '/api/identity' && request.method === 'GET') {
+        const cid = getCompanionId(request);
         const identity = await env.DB.prepare(
-          'SELECT * FROM identity ORDER BY pinned DESC, priority DESC'
-        ).all();
+          'SELECT * FROM identity WHERE companion_id = ? ORDER BY pinned DESC, priority DESC'
+        ).bind(cid).all();
         return json(identity.results || []);
       }
 
       if (path === '/api/identity' && request.method === 'POST') {
+        const cid = getCompanionId(request);
         const { content, identity_type = 'trait', priority = 5, pinned = false } = await request.json() as any;
         const result = await env.DB.prepare(
-          'INSERT INTO identity (content, identity_type, priority, pinned) VALUES (?, ?, ?, ?)'
-        ).bind(content, identity_type, priority, pinned ? 1 : 0).run();
+          'INSERT INTO identity (companion_id, content, identity_type, priority, pinned) VALUES (?, ?, ?, ?, ?)'
+        ).bind(cid, content, identity_type, priority, pinned ? 1 : 0).run();
         return json({ success: true, id: result.meta.last_row_id });
       }
 
       if (path.startsWith('/api/identity/') && request.method === 'DELETE') {
+        const cid = getCompanionId(request);
         const id = path.split('/')[3];
-        await env.DB.prepare('DELETE FROM identity WHERE id = ?').bind(id).run();
+        // Scope by companion_id so a client cannot delete another companion's
+        // identity rows even if they guess the id.
+        await env.DB.prepare('DELETE FROM identity WHERE id = ? AND companion_id = ?').bind(id, cid).run();
         return json({ success: true });
       }
 
-      // ---- Memories ----
+      // ---- Memories (scoped) ----
       if (path === '/api/memories' && request.method === 'GET') {
+        const cid = getCompanionId(request);
         const memories = await env.DB.prepare(
-          'SELECT * FROM memories ORDER BY created_at DESC LIMIT 50'
-        ).all();
+          'SELECT * FROM memories WHERE companion_id = ? ORDER BY created_at DESC LIMIT 50'
+        ).bind(cid).all();
         return json(memories.results || []);
       }
 
       if (path === '/api/memories' && request.method === 'POST') {
+        const cid = getCompanionId(request);
         const { content, memory_type = 'core', emotional_weight = 5 } = await request.json() as any;
         await env.DB.prepare(
-          'INSERT INTO memories (content, memory_type, emotional_weight) VALUES (?, ?, ?)'
-        ).bind(content, memory_type, emotional_weight).run();
+          'INSERT INTO memories (companion_id, content, memory_type, emotional_weight) VALUES (?, ?, ?, ?)'
+        ).bind(cid, content, memory_type, emotional_weight).run();
         return json({ success: true });
       }
 
@@ -1406,23 +1453,25 @@ export default {
         });
       }
 
-      // ---- Export Thread ----
+      // ---- Export Thread (verified against active companion) ----
       if (path.startsWith('/api/export/thread/') && request.method === 'GET') {
+        const cid = getCompanionId(request);
         const threadId = path.split('/')[4];
-        const thread = await env.DB.prepare('SELECT * FROM threads WHERE id = ?').bind(threadId).first();
+        const thread = await env.DB.prepare('SELECT * FROM threads WHERE id = ?').bind(threadId).first<any>();
         if (!thread) return json({ error: 'Thread not found' }, 404);
+        if (thread.companion_id !== cid) return json({ error: 'thread belongs to a different companion' }, 403);
 
         const messages = await env.DB.prepare(
           'SELECT role, content, model, created_at FROM messages WHERE thread_id = ? ORDER BY created_at ASC'
         ).bind(threadId).all();
 
-        const companion = await env.DB.prepare('SELECT name FROM companion WHERE id = 1').first<{ name: string }>();
+        const companion = await env.DB.prepare('SELECT name FROM companion WHERE id = ?').bind(cid).first<{ name: string }>();
 
         const exported = {
-          haven_version: '1.0.0',
+          haven_version: '1.7.0',
           exported_at: new Date().toISOString(),
           companion: companion?.name || 'Companion',
-          thread: { id: threadId, title: (thread as any).title, created_at: (thread as any).created_at },
+          thread: { id: threadId, title: thread.title, created_at: thread.created_at },
           messages: (messages.results || []).map((m: any) => ({
             role: m.role,
             content: m.content,
@@ -1440,14 +1489,17 @@ export default {
         });
       }
 
-      // ---- Export All ----
+      // ---- Export All (full backup — every companion + global settings) ----
       if (path === '/api/export/all' && request.method === 'GET') {
-        const companion = await env.DB.prepare('SELECT * FROM companion WHERE id = 1').first();
-        const identity = await env.DB.prepare('SELECT * FROM identity ORDER BY pinned DESC, priority DESC').all();
-        const threads = await env.DB.prepare('SELECT * FROM threads ORDER BY last_message_at DESC').all();
-        const memories = await env.DB.prepare('SELECT * FROM memories ORDER BY created_at DESC').all();
-        const people = await env.DB.prepare('SELECT * FROM people').all();
-        const dates = await env.DB.prepare('SELECT * FROM important_dates').all();
+        // Includes companion_id in each scoped row so an import flow can
+        // reconstruct the multi-companion state.
+        const companions = await env.DB.prepare('SELECT * FROM companion ORDER BY id ASC').all();
+        const identity = await env.DB.prepare('SELECT * FROM identity ORDER BY companion_id, pinned DESC, priority DESC').all();
+        const threads = await env.DB.prepare('SELECT * FROM threads ORDER BY companion_id, last_message_at DESC').all();
+        const memories = await env.DB.prepare('SELECT * FROM memories ORDER BY companion_id, created_at DESC').all();
+        const people = await env.DB.prepare('SELECT * FROM people ORDER BY companion_id').all();
+        const dates = await env.DB.prepare('SELECT * FROM important_dates ORDER BY companion_id').all();
+        const files = await env.DB.prepare('SELECT companion_id, filename, file_size, file_type, extracted_text FROM companion_files ORDER BY companion_id, added_at DESC').all();
 
         // Get all messages per thread
         const threadData = [];
@@ -1462,14 +1514,15 @@ export default {
         }
 
         const exported = {
-          haven_version: '1.0.0',
+          haven_version: '1.7.0',
           exported_at: new Date().toISOString(),
-          companion,
+          companions: companions.results || [],
           identity: identity.results || [],
           threads: threadData,
           memories: memories.results || [],
           people: people.results || [],
           important_dates: dates.results || [],
+          companion_files: files.results || [],
         };
 
         return new Response(JSON.stringify(exported, null, 2), {
