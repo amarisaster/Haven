@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.7.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.7.1-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -437,6 +437,24 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.7.1** — Native Status Tool + Tool Call Chips + Polish Pass
+
+Shakeout after dogfooding v1.7 with three companions on fresh infrastructure. Companions can finally change their own status, tool calls are visible when they fire, and the in-app UX got a lot of small gaps closed.
+
+- **Native `update_my_status` tool** injected alongside MCP tools and executed locally by the worker. Companions used to narrate status changes without anything happening — now the status next to their name actually flips when they call it.
+- **🔧 Tool call chips** under every companion message showing which tools fired during that response. Failed calls get struck through in red. Hover for the server name. The worker emits tool results in an SSE event; the frontend captures them and attaches to the Message type.
+- **Typing indicator** — three bouncing dots (iMessage-style) while you wait for the first token, then flips to the blinking cursor once streaming starts. Previously the empty bubble made you wonder whether anything was happening.
+- **Reaction + GIF directives hoisted** to an `## Expression` section right after `## Identity` in the system prompt. Small-context models were ignoring them when they sat at the tail end after 20 MCP tool schemas.
+- **Thread rename + delete** collapsed behind a single `⋯` menu per row. Inline title editing with Enter / Escape / blur-to-save. The old hover-only delete button never fired on PWA.
+- **Message delete that persists** — previously it only mutated React state so messages came back on refresh. New `DELETE /api/messages/:id` endpoint scoped through threads so companions can't touch each other's messages.
+- **Live user status in the chat header** — was reading from localStorage that nothing populates; now fetches from `/api/user-status` alongside the companion-status poll.
+- **Ghost thread rollback** — failed inference (Ollama 500, missing key, etc.) no longer leaves orphaned "New conversation" rows in your sidebar. The worker deletes the just-inserted thread if it created it this call.
+- **Refresh keeps your view** — hitting F5 inside a chat thread lands you back in that same thread instead of the companion grid. View + active thread persisted in localStorage.
+- **DOCX / EPUB extraction** for project files and chat attachments, using the JSZip we already ship (no new dependency). EPUB walks the OPF spine to reconstruct chapter order.
+- **Nexus chat markdown parser** — the Obsidian `nexus-ai-chat-importer` plugin export format now imports as Haven threads. Single file or zipped folder.
+- **MCP streamable HTTP spec fixes** — `Accept: application/json, text/event-stream` header + SSE response body unwrapping. Strict servers like Nexus Gateway (137 tools) discover correctly now.
+- **Upstream errors surfaced** — "Inference failed: 500 — {the real reason from Ollama/OpenRouter}" instead of a bare status code.
 
 **v1.7.0** — Multi-Companion Support
 
