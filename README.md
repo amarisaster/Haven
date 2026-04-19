@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.6.3-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.6.4-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -313,6 +313,11 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.6.4** — Ollama Cloud Tool Calling Fix
+
+- **Tool calling now works on Ollama Cloud.** Haven was routing tool-call requests to Ollama's OpenAI-compat endpoint (`/v1/chat/completions`), which returns `405 method not allowed` when a `tools` parameter is present. The native `/api/chat` endpoint accepts OpenAI-shaped tool schemas and returns OpenAI-shaped responses — Haven now uses it for Ollama tool-call inference. (Nexus Gateway's chat bridge already uses this pattern; Haven now matches.)
+- Plain chat streaming is unchanged — still uses the existing Ollama streaming path with its OpenAI-compat → native fallback.
 
 **v1.6.3** — MCP SSE Transport Support
 

@@ -115,7 +115,7 @@ async function discoverViaStreamableHTTP(server: McpServer): Promise<McpTool[]> 
     headers,
     body: JSON.stringify({
       jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.4' } },
     }),
   });
 
@@ -167,7 +167,7 @@ async function executeViaStreamableHTTP(
     method: 'POST', headers,
     body: JSON.stringify({
       jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.4' } },
     }),
   });
   const sessionId = initResp.headers.get('mcp-session-id');
@@ -254,7 +254,7 @@ async function discoverViaSSE(server: McpServer): Promise<McpTool[]> {
       method: 'POST', headers: session.postHeaders,
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.4' } },
       }),
     });
     const initRead = await readSSEJsonRpc(session.reader, session.decoder, buffer, 1);
@@ -298,7 +298,7 @@ async function executeViaSSE(
       method: 'POST', headers: session.postHeaders,
       body: JSON.stringify({
         jsonrpc: '2.0', id: 1, method: 'initialize',
-        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.3' } },
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'haven', version: '1.6.4' } },
       }),
     });
     const initRead = await readSSEJsonRpc(session.reader, session.decoder, buffer, 1);
@@ -416,7 +416,11 @@ async function inferenceWithTools(
 
   let url: string;
   if (provider === 'ollama') {
-    url = `${baseOllamaUrl}/v1/chat/completions`;
+    // Ollama Cloud's OpenAI-compat endpoint (/v1/chat/completions) returns 405
+    // when `tools` is present in the body. The native /api/chat endpoint
+    // accepts OpenAI-shaped tools and returns OpenAI-shaped responses when
+    // stream is disabled. Confirmed by Nexus-Gateway's inference layer.
+    url = `${baseOllamaUrl}/api/chat`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
   } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
     url = `${customBaseUrl}/chat/completions`;
