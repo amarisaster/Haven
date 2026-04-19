@@ -14,7 +14,7 @@ interface Env {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Companion-Id',
 };
 
 function json(data: unknown, status = 200) {
@@ -113,10 +113,39 @@ async function readSSEUntil(
   throw new Error(`SSE read timeout after ${timeoutMs}ms`);
 }
 
+// MCP 2025-03-26 streamable HTTP lets servers pick their response format per
+// request — either `application/json` with the JSON-RPC payload as body, or
+// `text/event-stream` with the payload inside a single SSE data event. This
+// helper unwraps whichever the server sent.
+async function parseStreamableResponse(resp: Response): Promise<any> {
+  const contentType = resp.headers.get('content-type') || '';
+  if (contentType.includes('text/event-stream')) {
+    const text = await resp.text();
+    // Pad with a blank line so parseSSEBuffer flushes the final event.
+    const { events } = parseSSEBuffer(text + '\n\n');
+    for (const ev of events) {
+      try {
+        const parsed = JSON.parse(ev.data);
+        if (parsed && parsed.jsonrpc === '2.0') return parsed;
+      } catch {
+        // Non-JSON event — ignore and try the next one.
+      }
+    }
+    throw new Error('streamable SSE response had no JSON-RPC payload');
+  }
+  return await resp.json();
+}
+
 // ---- Streamable HTTP transport (MCP 2024-11-05 spec — single POST endpoint) ----
 
 async function discoverViaStreamableHTTP(server: McpServer): Promise<McpTool[]> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // MCP 2025-03-26 streamable HTTP requires the client to advertise BOTH
+  // response types it can handle — strict servers (Nexus Gateway) return 406
+  // otherwise.
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+  };
   if (server.api_key) headers['Authorization'] = `Bearer ${server.api_key}`;
 
   const initResp = await fetch(server.url, {
@@ -153,7 +182,7 @@ async function discoverViaStreamableHTTP(server: McpServer): Promise<McpTool[]> 
     throw new Error(`streamable tools/list ${listResp.status}: ${errBody.slice(0, 200)}`);
   }
 
-  const listData = await listResp.json() as any;
+  const listData = await parseStreamableResponse(listResp);
   const tools = listData?.result?.tools || [];
   return tools.map((t: any) => ({
     name: t.name,
@@ -169,7 +198,10 @@ async function discoverViaStreamableHTTP(server: McpServer): Promise<McpTool[]> 
 async function executeViaStreamableHTTP(
   serverUrl: string, serverKey: string | null, toolName: string, args: Record<string, unknown>,
 ): Promise<string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+  };
   if (serverKey) headers['Authorization'] = `Bearer ${serverKey}`;
 
   const initResp = await fetch(serverUrl, {
@@ -192,7 +224,7 @@ async function executeViaStreamableHTTP(
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: toolName, arguments: args } }),
   });
 
-  const data = await resp.json() as any;
+  const data = await parseStreamableResponse(resp);
   const content = data?.result?.content || [];
   return content.map((c: any) => c.text || '').join('\n') || JSON.stringify(data?.result || {});
 }

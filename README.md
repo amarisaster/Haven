@@ -102,6 +102,12 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - Works with [CogCor](https://github.com/amarisaster/Cognitive-Core), [Nexus Gateway](https://github.com/amarisaster/Nexus-Gateway), [Spotify MCP](https://github.com/amarisaster/Spotify-MCP), or any MCP-compatible server
 - Tool discovery — Haven finds available tools and passes them to the model via function calling
 - Your companion can now store memories, update emotional state, control Spotify, send Discord messages — whatever tools you connect
+- **Scales to real setups** — tested against a Nexus gateway aggregating **137 tools** across 5 companions' CogCor + Discord + Spotify + Notion + biometrics. Haven absorbs it all.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/mcp-nexus-137.png" width="70%" alt="Haven MCP Servers panel showing Nexus connected with 137 tools discovered" />
+</p>
+<p align="center"><em>Settings &rarr; MCP Servers — paste URL + key, hit Test, watch the tool count land.</em></p>
 
 ### Make it yours
 - **Font picker** — System, Serif, Mono, or **OpenDyslexic** for accessibility
