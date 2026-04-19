@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getCompanion } from './lib/api';
+import { getCompanion, setActiveCompanionId, activeCompanionId } from './lib/api';
 import ThreadList from './components/ThreadList';
 import ChatContainer from './components/ChatContainer';
 import SetupWizard from './components/SetupWizard';
 import ImportWizard from './components/ImportWizard';
+import CompanionGrid from './components/CompanionGrid';
 import Settings from './pages/Settings';
 
-type View = 'threads' | 'chat' | 'settings';
+type View = 'grid' | 'threads' | 'chat' | 'settings';
 
 export default function App() {
-  const [view, setView] = useState<View>('threads');
+  const [view, setView] = useState<View>('grid');
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [companionName, setCompanionName] = useState('');
   const [companionAvatar, setCompanionAvatar] = useState('');
@@ -17,22 +18,28 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
-    getCompanion()
-      .then((c) => {
-        setCompanionName(c.name);
-        setCompanionAvatar(c.avatar_url || '');
-        if (c.name === 'Companion') setNeedsSetup(true);
-      })
-      .catch(() => setNeedsSetup(true))
-      .finally(() => setLoaded(true));
+  // Fetch companion data for the active companion id (from localStorage).
+  const refreshActiveCompanion = useCallback(async () => {
+    try {
+      const c = await getCompanion();
+      setCompanionName(c.name);
+      setCompanionAvatar(c.avatar_url || '');
+      if (c.name === 'Companion') setNeedsSetup(true);
+    } catch {
+      setNeedsSetup(true);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshActiveCompanion().finally(() => setLoaded(true));
+  }, [refreshActiveCompanion]);
 
   // Handle browser back button
   useEffect(() => {
     const onPop = () => {
       if (view === 'chat') setView('threads');
       else if (view === 'settings') setView('threads');
+      else if (view === 'threads') setView('grid');
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -53,6 +60,36 @@ export default function App() {
   const goBack = useCallback(() => {
     setView('threads');
     window.history.back();
+  }, []);
+
+  const openCompanion = useCallback((companionId: number) => {
+    // Grid tile tapped — set active companion in localStorage, refresh the
+    // header data for that companion, then navigate into their thread list.
+    setActiveCompanionId(companionId);
+    refreshActiveCompanion();
+    setView('threads');
+    window.history.pushState({ view: 'threads' }, '');
+  }, [refreshActiveCompanion]);
+
+  const goToGrid = useCallback(() => {
+    setView('grid');
+    window.history.pushState({ view: 'grid' }, '');
+  }, []);
+
+  const handleSwitchCompanion = useCallback((companionId: number) => {
+    // Persistent avatar strip in thread list header tapped — same as
+    // openCompanion but without a history push (we stay in 'threads' view,
+    // just for a different companion).
+    setActiveCompanionId(companionId);
+    refreshActiveCompanion();
+    setActiveThreadId(null);
+  }, [refreshActiveCompanion]);
+
+  const handleAddCompanion = useCallback(() => {
+    // TODO(#68): replace with proper AddCompanionWizard (name → identity →
+    // appearance → files). For now: route to Settings where Mai can edit
+    // the active companion manually, or show a small prompt.
+    alert('Add Companion wizard coming in the next update. For now you can deploy a second Haven instance if you need another companion right away.');
   }, []);
 
   const handleThreadCreated = useCallback((id: string) => {
@@ -91,7 +128,16 @@ export default function App() {
 
   return (
     <div style={{ height: '100%', background: 'var(--haven-bg)' }}>
-      {/* Thread List (home) */}
+      {/* Companion grid (home) — v1.7 multi-companion landing */}
+      {view === 'grid' && (
+        <CompanionGrid
+          onOpenCompanion={openCompanion}
+          onAddCompanion={handleAddCompanion}
+          onOpenSettings={() => { setView('settings'); window.history.pushState({ view: 'settings' }, ''); }}
+        />
+      )}
+
+      {/* Thread List — scoped to the active companion */}
       {view === 'threads' && (
         <ThreadList
           companionName={companionName}
@@ -100,6 +146,9 @@ export default function App() {
           onNewThread={openNewThread}
           onOpenSettings={() => { setView('settings'); window.history.pushState({ view: 'settings' }, ''); }}
           onOpenImport={() => setShowImport(true)}
+          onSwitchCompanion={handleSwitchCompanion}
+          onBackToGrid={goToGrid}
+          activeCompanionId={activeCompanionId()}
         />
       )}
 

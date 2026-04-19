@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Thread } from '../lib/types';
 import { getThreads, deleteThread } from '../lib/api';
+import CompanionSwitcher from './CompanionSwitcher';
 
 interface ThreadListProps {
   companionName: string;
@@ -9,6 +10,10 @@ interface ThreadListProps {
   onNewThread: () => void;
   onOpenSettings: () => void;
   onOpenImport: () => void;
+  // v1.7 multi-companion — optional so older callers keep compiling.
+  onSwitchCompanion?: (companionId: number) => void;
+  onBackToGrid?: () => void;
+  activeCompanionId?: number;
 }
 
 function formatTime(dateStr: string | null): string {
@@ -24,6 +29,7 @@ function formatTime(dateStr: string | null): string {
 
 export default function ThreadList({
   companionName, companionAvatar, onSelectThread, onNewThread, onOpenSettings, onOpenImport,
+  onSwitchCompanion, onBackToGrid, activeCompanionId,
 }: ThreadListProps) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,7 +43,9 @@ export default function ThreadList({
     }
   };
 
-  useEffect(() => { loadThreads(); }, []);
+  // Reload threads when the active companion changes — the hook we're tied
+  // to is activeCompanionId, which bumps whenever the switcher fires.
+  useEffect(() => { loadThreads(); }, [activeCompanionId]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -50,11 +58,24 @@ export default function ThreadList({
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Header */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '16px 20px', borderBottom: '1px solid var(--haven-border)',
+        display: 'flex', flexDirection: 'column', gap: '8px',
+        padding: '16px 20px 12px', borderBottom: '1px solid var(--haven-border)',
         background: 'var(--haven-surface)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {/* Companion switcher (v1.7) — only renders when there's >1 companion */}
+        {onSwitchCompanion && onBackToGrid && activeCompanionId !== undefined && (
+          <CompanionSwitcher
+            activeId={activeCompanionId}
+            onSwitch={onSwitchCompanion}
+            onBackToGrid={onBackToGrid}
+          />
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: onBackToGrid ? 'pointer' : 'default' }}
+          onClick={onBackToGrid}
+          title={onBackToGrid ? 'Back to companions' : undefined}
+        >
           {companionAvatar ? (
             <img src={companionAvatar} alt="" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
           ) : (
@@ -104,6 +125,7 @@ export default function ThreadList({
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
+        </div>
         </div>
       </div>
 

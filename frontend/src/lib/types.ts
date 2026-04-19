@@ -20,7 +20,17 @@ export interface Companion {
   id: number;
   name: string;
   avatar_url: string | null;
+  archived_at?: string | null;
   created_at: string;
+}
+
+export interface CompanionFile {
+  id: number;
+  filename: string;
+  file_size: number | null;
+  file_type: string | null;
+  text_length?: number;
+  added_at: string;
 }
 
 export interface Identity {
