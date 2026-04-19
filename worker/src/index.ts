@@ -667,6 +667,79 @@ async function* streamInference(
 }
 
 // ============================================================
+// Schema migrations (v1.7.0 multi-companion)
+// ============================================================
+//
+// Runs idempotently — ALTER TABLE ADD COLUMN fails harmlessly if the column
+// already exists, and CREATE TABLE / CREATE INDEX use IF NOT EXISTS. Guarded
+// by a module-level flag so each Worker instance only tries once per cold
+// start. Existing single-companion installs auto-associate all their data
+// with companion_id=1 via the column DEFAULT.
+
+let migrationsRan = false;
+
+async function runMigrations(db: D1Database): Promise<void> {
+  // v1.7: add companion_id scope to per-companion tables. DEFAULT 1 means
+  // existing rows auto-associate to the seed companion.
+  const columnAdds: Array<[string, string]> = [
+    ['identity', 'companion_id INTEGER NOT NULL DEFAULT 1'],
+    ['threads', 'companion_id INTEGER NOT NULL DEFAULT 1'],
+    ['memories', 'companion_id INTEGER NOT NULL DEFAULT 1'],
+    ['people', 'companion_id INTEGER NOT NULL DEFAULT 1'],
+    ['important_dates', 'companion_id INTEGER NOT NULL DEFAULT 1'],
+    ['companion', 'archived_at TEXT DEFAULT NULL'],
+  ];
+  for (const [table, col] of columnAdds) {
+    try {
+      await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col}`).run();
+    } catch {
+      // Column already exists — idempotent, ignore.
+    }
+  }
+
+  // v1.7: per-companion file attachments (loaded into system prompt as
+  // "Project Files" when chatting with that companion).
+  await db.prepare(`CREATE TABLE IF NOT EXISTS companion_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    companion_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    r2_key TEXT NOT NULL,
+    file_size INTEGER,
+    file_type TEXT,
+    extracted_text TEXT,
+    added_at TEXT DEFAULT (datetime('now'))
+  )`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_companion_files_companion ON companion_files(companion_id, added_at DESC)`).run();
+
+  // Indexes on the newly-scoped tables (safe to run repeatedly).
+  const indexAdds: string[] = [
+    'CREATE INDEX IF NOT EXISTS idx_identity_companion ON identity(companion_id, pinned, priority)',
+    'CREATE INDEX IF NOT EXISTS idx_threads_companion ON threads(companion_id, last_message_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_memories_companion ON memories(companion_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_people_companion ON people(companion_id)',
+    'CREATE INDEX IF NOT EXISTS idx_important_dates_companion ON important_dates(companion_id)',
+  ];
+  for (const sql of indexAdds) {
+    try {
+      await db.prepare(sql).run();
+    } catch {
+      // Index on missing column (very old schema) — tolerate.
+    }
+  }
+}
+
+async function ensureMigrations(db: D1Database): Promise<void> {
+  if (migrationsRan) return;
+  try {
+    await runMigrations(db);
+  } catch (e) {
+    // Log and continue — a broken migration shouldn't take the worker down.
+    console.log(`[MIGRATE] Error during v1.7 migration: ${e}`);
+  }
+  migrationsRan = true;
+}
+
+// ============================================================
 // API Routes
 // ============================================================
 
@@ -675,6 +748,10 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
+
+    // Run migrations once per worker instance (idempotent, fast after first
+    // successful run since module-level flag guards repeated execution).
+    await ensureMigrations(env.DB);
 
     const url = new URL(request.url);
     const path = url.pathname;
