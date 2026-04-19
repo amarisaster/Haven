@@ -24,6 +24,15 @@ function json(data: unknown, status = 200) {
   });
 }
 
+// Which companion the current request operates on. Frontend sends
+// X-Companion-Id on every scoped request; falls back to 1 (the default seed
+// companion) so pre-v1.7 frontends keep working unchanged.
+function getCompanionId(request: Request): number {
+  const raw = request.headers.get('x-companion-id');
+  const n = raw ? Number(raw) : 1;
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
 // ============================================================
 // MCP — tool discovery and execution
 // ============================================================
@@ -935,18 +944,209 @@ export default {
         return json(messages.results || []);
       }
 
-      // ---- Companion ----
+      // ---- Companion (singular — v1.6 compat, operates on the active companion) ----
       if (path === '/api/companion' && request.method === 'GET') {
-        const companion = await env.DB.prepare('SELECT * FROM companion WHERE id = 1').first();
-        return json(companion || { id: 1, name: 'Companion' });
+        const cid = getCompanionId(request);
+        const companion = await env.DB.prepare('SELECT * FROM companion WHERE id = ?').bind(cid).first();
+        return json(companion || { id: cid, name: 'Companion' });
       }
 
       if (path === '/api/companion' && request.method === 'PUT') {
+        const cid = getCompanionId(request);
         const { name, avatar_url } = await request.json() as any;
         await env.DB.prepare(
-          'UPDATE companion SET name = ?, avatar_url = ? WHERE id = 1'
-        ).bind(name, avatar_url || null).run();
+          'UPDATE companion SET name = ?, avatar_url = ? WHERE id = ?'
+        ).bind(name, avatar_url || null, cid).run();
         return json({ success: true });
+      }
+
+      // ---- Companions (plural — v1.7 multi-companion CRUD) ----
+
+      if (path === '/api/companions' && request.method === 'GET') {
+        const rows = await env.DB.prepare(
+          'SELECT id, name, avatar_url, created_at FROM companion WHERE archived_at IS NULL ORDER BY created_at ASC'
+        ).all();
+        return json(rows.results || []);
+      }
+
+      if (path === '/api/companions/archived' && request.method === 'GET') {
+        const rows = await env.DB.prepare(
+          'SELECT id, name, avatar_url, archived_at, created_at FROM companion WHERE archived_at IS NOT NULL ORDER BY archived_at DESC'
+        ).all();
+        return json(rows.results || []);
+      }
+
+      if (path === '/api/companions' && request.method === 'POST') {
+        const { name, avatar_url } = await request.json() as any;
+        if (!name || !String(name).trim()) return json({ error: 'name required' }, 400);
+        const result = await env.DB.prepare(
+          'INSERT INTO companion (name, avatar_url) VALUES (?, ?)'
+        ).bind(String(name).trim(), avatar_url || null).run();
+        return json({ success: true, id: result.meta.last_row_id });
+      }
+
+      if (path === '/api/companions/import' && request.method === 'POST') {
+        const bundle = await request.json() as any;
+        const c = bundle?.companion;
+        if (!c?.name) return json({ error: 'companion.name required in bundle' }, 400);
+        const result = await env.DB.prepare(
+          'INSERT INTO companion (name, avatar_url) VALUES (?, ?)'
+        ).bind(String(c.name).trim(), c.avatar_url || null).run();
+        const newId = Number(result.meta.last_row_id);
+        // Insert scoped rows. We silently drop anything malformed rather than
+        // failing the whole import — a partial restore beats a total refusal.
+        for (const row of (bundle.identity || [])) {
+          try {
+            await env.DB.prepare(
+              'INSERT INTO identity (companion_id, content, identity_type, priority, pinned) VALUES (?, ?, ?, ?, ?)'
+            ).bind(newId, row.content, row.identity_type || 'trait', row.priority ?? 5, row.pinned ? 1 : 0).run();
+          } catch {}
+        }
+        for (const row of (bundle.memories || [])) {
+          try {
+            await env.DB.prepare(
+              'INSERT INTO memories (companion_id, content, memory_type, emotional_weight) VALUES (?, ?, ?, ?)'
+            ).bind(newId, row.content, row.memory_type || 'core', row.emotional_weight ?? 5).run();
+          } catch {}
+        }
+        for (const row of (bundle.people || [])) {
+          try {
+            await env.DB.prepare(
+              'INSERT INTO people (companion_id, name, category, content) VALUES (?, ?, ?, ?)'
+            ).bind(newId, row.name, row.category || 'friend', row.content).run();
+          } catch {}
+        }
+        for (const row of (bundle.important_dates || [])) {
+          try {
+            await env.DB.prepare(
+              'INSERT INTO important_dates (companion_id, date_name, actual_date, date_type, recurring) VALUES (?, ?, ?, ?, ?)'
+            ).bind(newId, row.date_name, row.actual_date, row.date_type || 'event', row.recurring ? 1 : 0).run();
+          } catch {}
+        }
+        // Imported files carry only the extracted text, not the original
+        // bytes — r2_key is empty to signal "imported, no binary".
+        for (const row of (bundle.files || [])) {
+          try {
+            await env.DB.prepare(
+              'INSERT INTO companion_files (companion_id, filename, r2_key, file_size, file_type, extracted_text) VALUES (?, ?, ?, ?, ?, ?)'
+            ).bind(newId, row.filename, '', row.file_size || null, row.file_type || null, row.extracted_text || '').run();
+          } catch {}
+        }
+        return json({ success: true, id: newId });
+      }
+
+      // Path-based routes: /api/companions/:id/...
+      if (path.startsWith('/api/companions/')) {
+        const parts = path.split('/');
+        // parts = ['', 'api', 'companions', ':id', ...]
+        const cid = Number(parts[3]);
+        if (Number.isFinite(cid) && cid > 0) {
+          const sub = parts[4];
+
+          // GET /api/companions/:id/export
+          if (sub === 'export' && request.method === 'GET') {
+            const c = await env.DB.prepare('SELECT id, name, avatar_url FROM companion WHERE id = ?').bind(cid).first<any>();
+            if (!c) return json({ error: 'companion not found' }, 404);
+            const identity = await env.DB.prepare('SELECT content, identity_type, priority, pinned FROM identity WHERE companion_id = ? ORDER BY pinned DESC, priority DESC').bind(cid).all();
+            const memories = await env.DB.prepare('SELECT content, memory_type, emotional_weight FROM memories WHERE companion_id = ?').bind(cid).all();
+            const people = await env.DB.prepare('SELECT name, category, content FROM people WHERE companion_id = ?').bind(cid).all();
+            const dates = await env.DB.prepare('SELECT date_name, actual_date, date_type, recurring FROM important_dates WHERE companion_id = ?').bind(cid).all();
+            const files = await env.DB.prepare('SELECT filename, file_size, file_type, extracted_text FROM companion_files WHERE companion_id = ?').bind(cid).all();
+            const bundle = {
+              haven_export_version: '1.7.0',
+              exported_at: new Date().toISOString(),
+              companion: { name: c.name, avatar_url: c.avatar_url },
+              identity: identity.results || [],
+              memories: memories.results || [],
+              people: people.results || [],
+              important_dates: dates.results || [],
+              files: files.results || [],
+            };
+            return new Response(JSON.stringify(bundle, null, 2), {
+              headers: {
+                'Content-Type': 'application/json',
+                'Content-Disposition': `attachment; filename="companion-${c.name.replace(/[^a-z0-9]/gi, '-')}.json"`,
+                ...corsHeaders,
+              },
+            });
+          }
+
+          // /api/companions/:id/files
+          if (sub === 'files') {
+            // DELETE /api/companions/:id/files/:fileId
+            if (request.method === 'DELETE' && parts[5]) {
+              const fileId = Number(parts[5]);
+              const row = await env.DB.prepare('SELECT r2_key FROM companion_files WHERE id = ? AND companion_id = ?').bind(fileId, cid).first<{ r2_key: string }>();
+              if (row?.r2_key) {
+                try { await env.FILES.delete(row.r2_key); } catch {}
+              }
+              await env.DB.prepare('DELETE FROM companion_files WHERE id = ? AND companion_id = ?').bind(fileId, cid).run();
+              return json({ success: true });
+            }
+            // GET /api/companions/:id/files
+            if (request.method === 'GET') {
+              const rows = await env.DB.prepare(
+                'SELECT id, filename, file_size, file_type, LENGTH(extracted_text) AS text_length, added_at FROM companion_files WHERE companion_id = ? ORDER BY added_at DESC'
+              ).bind(cid).all();
+              return json(rows.results || []);
+            }
+            // POST /api/companions/:id/files
+            if (request.method === 'POST') {
+              const form = await request.formData();
+              // Workers's TS lib types don't expose File as a value, so use a
+              // structural check on the relevant methods.
+              const raw = form.get('file');
+              if (!raw || typeof raw === 'string' || typeof (raw as { stream?: unknown }).stream !== 'function') {
+                return json({ error: 'file required' }, 400);
+              }
+              const file = raw as unknown as { name: string; size: number; type: string; stream: () => ReadableStream };
+              if (file.size > 20 * 1024 * 1024) return json({ error: 'file exceeds 20MB limit' }, 413);
+              const extractedText = String(form.get('extracted_text') || '');
+              const extRaw = file.name.split('.').pop() || 'bin';
+              const ext = extRaw.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'bin';
+              const r2Key = `companion-${cid}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+              await env.FILES.put(r2Key, file.stream(), { httpMetadata: { contentType: file.type } });
+              const result = await env.DB.prepare(
+                'INSERT INTO companion_files (companion_id, filename, r2_key, file_size, file_type, extracted_text) VALUES (?, ?, ?, ?, ?, ?)'
+              ).bind(cid, file.name, r2Key, file.size, file.type || null, extractedText).run();
+              return json({ success: true, id: result.meta.last_row_id, r2_key: r2Key });
+            }
+          }
+
+          // POST /api/companions/:id/archive
+          if (sub === 'archive' && request.method === 'POST') {
+            if (cid === 1) {
+              // Don't archive the default seed companion — at least one must
+              // always be active so the default-companion-id logic has somewhere
+              // to land.
+              return json({ error: 'cannot archive the default companion' }, 400);
+            }
+            await env.DB.prepare('UPDATE companion SET archived_at = datetime(\'now\') WHERE id = ?').bind(cid).run();
+            return json({ success: true });
+          }
+
+          // POST /api/companions/:id/restore
+          if (sub === 'restore' && request.method === 'POST') {
+            await env.DB.prepare('UPDATE companion SET archived_at = NULL WHERE id = ?').bind(cid).run();
+            return json({ success: true });
+          }
+
+          // PUT /api/companions/:id  (update name / avatar)
+          if (!sub && request.method === 'PUT') {
+            const { name, avatar_url } = await request.json() as any;
+            await env.DB.prepare(
+              'UPDATE companion SET name = COALESCE(?, name), avatar_url = COALESCE(?, avatar_url) WHERE id = ?'
+            ).bind(name?.trim() || null, avatar_url ?? null, cid).run();
+            return json({ success: true });
+          }
+
+          // GET /api/companions/:id (single companion fetch)
+          if (!sub && request.method === 'GET') {
+            const c = await env.DB.prepare('SELECT * FROM companion WHERE id = ?').bind(cid).first();
+            if (!c) return json({ error: 'companion not found' }, 404);
+            return json(c);
+          }
+        }
       }
 
       // ---- Identity ----
