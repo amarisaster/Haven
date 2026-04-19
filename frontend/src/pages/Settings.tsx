@@ -5,6 +5,7 @@ import {
   getSettings, updateSettings,
   getIdentity, addIdentity, deleteIdentity,
   uploadFile, getUserStatus, setUserStatus, apiBase,
+  archiveCompanion, setActiveCompanionId, activeCompanionId,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -17,9 +18,11 @@ interface SettingsProps {
 export default function Settings({ onImport, onBack }: SettingsProps) {
   // Companion
   const [compName, setCompName] = useState('');
+  const [compId, setCompId] = useState<number>(activeCompanionId());
   const [avatarUrl, setAvatarUrl] = useState('');
   const [compSaving, setCompSaving] = useState(false);
   const [compMsg, setCompMsg] = useState('');
+  const [archiving, setArchiving] = useState(false);
 
   // API Key — one field, auto-detect provider
   const [apiKey, setApiKey] = useState('');
@@ -84,6 +87,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   useEffect(() => {
     getCompanion().then((c) => {
       setCompName(c.name);
+      setCompId(c.id);
       setAvatarUrl(c.avatar_url || '');
     }).catch((e) => console.warn('[settings] getCompanion failed', e));
 
@@ -432,6 +436,49 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           </button>
           {compMsg && <span style={{ fontSize: '12px', color: compMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{compMsg}</span>}
         </div>
+
+        {/* Archive companion — v1.7 multi-companion. The default seed
+            companion (id=1) can't be archived because the rest of the
+            scoped tables default their companion_id to 1 when nothing
+            else is set. */}
+        {compId > 1 && (
+          <div style={{
+            marginTop: '20px', paddingTop: '16px',
+            borderTop: '1px solid var(--haven-border)',
+          }}>
+            <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginBottom: '8px' }}>
+              Archiving hides this companion from the grid and switcher without deleting anything. Their threads, identity, and memories are preserved — you can restore them later.
+            </p>
+            <button
+              onClick={async () => {
+                if (!confirm(`Archive ${compName}? Their data is preserved and they can be restored later.`)) return;
+                setArchiving(true);
+                try {
+                  await archiveCompanion(compId);
+                  // Switch active back to the default seed companion so the
+                  // next view isn't operating on an archived id.
+                  setActiveCompanionId(1);
+                  if (onBack) onBack();
+                  else window.location.reload();
+                } catch (e) {
+                  alert('Archive failed: ' + (e instanceof Error ? e.message : 'unknown error'));
+                } finally {
+                  setArchiving(false);
+                }
+              }}
+              disabled={archiving}
+              style={{
+                ...btnStyle,
+                background: 'transparent',
+                border: '1px solid #f87171',
+                color: '#f87171',
+                opacity: archiving ? 0.6 : 1,
+              }}
+            >
+              {archiving ? 'Archiving…' : 'Archive companion'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* API Key */}

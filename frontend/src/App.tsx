@@ -5,6 +5,7 @@ import ChatContainer from './components/ChatContainer';
 import SetupWizard from './components/SetupWizard';
 import ImportWizard from './components/ImportWizard';
 import CompanionGrid from './components/CompanionGrid';
+import AddCompanionWizard from './components/AddCompanionWizard';
 import Settings from './pages/Settings';
 
 type View = 'grid' | 'threads' | 'chat' | 'settings';
@@ -16,6 +17,7 @@ export default function App() {
   const [companionAvatar, setCompanionAvatar] = useState('');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showAddCompanion, setShowAddCompanion] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   // Fetch companion data for the active companion id (from localStorage).
@@ -86,11 +88,15 @@ export default function App() {
   }, [refreshActiveCompanion]);
 
   const handleAddCompanion = useCallback(() => {
-    // TODO(#68): replace with proper AddCompanionWizard (name → identity →
-    // appearance → files). For now: route to Settings where Mai can edit
-    // the active companion manually, or show a small prompt.
-    alert('Add Companion wizard coming in the next update. For now you can deploy a second Haven instance if you need another companion right away.');
+    setShowAddCompanion(true);
   }, []);
+
+  const handleAddCompanionComplete = useCallback((newId: number) => {
+    setShowAddCompanion(false);
+    // Open the newly-created companion's (empty) thread list immediately —
+    // feels more satisfying than dumping back onto the grid.
+    openCompanion(newId);
+  }, [openCompanion]);
 
   const handleThreadCreated = useCallback((id: string) => {
     setActiveThreadId(id);
@@ -175,6 +181,14 @@ export default function App() {
         <ImportWizard
           onClose={() => setShowImport(false)}
           onComplete={() => { setShowImport(false); setView('threads'); }}
+        />
+      )}
+
+      {/* Add Companion Wizard (v1.7) */}
+      {showAddCompanion && (
+        <AddCompanionWizard
+          onComplete={handleAddCompanionComplete}
+          onCancel={() => setShowAddCompanion(false)}
         />
       )}
     </div>
