@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { Thread } from '../lib/types';
-import { getThreads, deleteThread } from '../lib/api';
+import { getThreads, deleteThread, renameThread } from '../lib/api';
 import CompanionSwitcher from './CompanionSwitcher';
 
 interface ThreadListProps {
@@ -33,6 +33,17 @@ export default function ThreadList({
 }: ThreadListProps) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  // Dismiss the row menu when tapping anywhere else.
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const close = () => setMenuOpenId(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [menuOpenId]);
 
   const loadThreads = async () => {
     try {
@@ -52,6 +63,30 @@ export default function ThreadList({
     if (!confirm('Delete this thread?')) return;
     await deleteThread(id);
     loadThreads();
+  };
+
+  const startEdit = (e: React.MouseEvent, t: Thread) => {
+    e.stopPropagation();
+    setEditingId(t.id);
+    setEditingTitle(t.title || '');
+  };
+
+  const commitEdit = async () => {
+    if (!editingId) return;
+    const title = editingTitle.trim();
+    if (title) {
+      try {
+        await renameThread(editingId, title);
+      } catch { /* silent — local list still shows old title which is fine */ }
+    }
+    setEditingId(null);
+    setEditingTitle('');
+    loadThreads();
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditingTitle('');
   };
 
   return (
@@ -150,59 +185,126 @@ export default function ThreadList({
             <p style={{ fontSize: '12px', color: 'var(--haven-text-muted)', marginBottom: '20px' }}>Start a new conversation with {companionName}</p>
           </div>
         ) : (
-          threads.map(thread => (
-            <button
-              key={thread.id}
-              onClick={() => onSelectThread(thread.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '12px', width: '100%',
-                padding: '14px 20px', background: 'transparent', border: 'none',
-                borderBottom: '1px solid var(--haven-border)', cursor: 'pointer',
-                textAlign: 'left', position: 'relative',
-              }}
-            >
-              {/* Avatar */}
-              {companionAvatar ? (
-                <img src={companionAvatar} alt="" style={{ width: '44px', height: '44px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-              ) : (
-                <div style={{
-                  width: '44px', height: '44px', borderRadius: '50%', flexShrink: 0,
-                  background: 'var(--haven-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: 'white', fontSize: '18px', fontWeight: 600,
-                }}>
-                  {companionName.charAt(0)}
-                </div>
-              )}
-              {/* Thread info */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                  <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {thread.title || 'New conversation'}
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--haven-text-muted)', flexShrink: 0, marginLeft: '8px' }}>
-                    {formatTime(thread.last_message_at)}
-                  </span>
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--haven-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  Tap to continue...
-                </div>
-              </div>
-              {/* Delete */}
-              <button
-                onClick={(e) => handleDelete(e, thread.id)}
+          threads.map(thread => {
+            const isEditing = editingId === thread.id;
+            return (
+              <div
+                key={thread.id}
+                onClick={() => { if (!isEditing) onSelectThread(thread.id); }}
                 style={{
-                  position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)',
-                  background: 'transparent', border: 'none', cursor: 'pointer',
-                  color: 'var(--haven-text-muted)', opacity: 0, padding: '4px',
+                  display: 'flex', alignItems: 'center', gap: '12px', width: '100%',
+                  padding: '14px 20px', background: 'transparent',
+                  borderBottom: '1px solid var(--haven-border)', cursor: isEditing ? 'default' : 'pointer',
+                  textAlign: 'left',
                 }}
-                className="thread-delete-btn"
               >
-                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                </svg>
-              </button>
-            </button>
-          ))
+                {/* Avatar */}
+                {companionAvatar ? (
+                  <img src={companionAvatar} alt="" style={{ width: '44px', height: '44px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                ) : (
+                  <div style={{
+                    width: '44px', height: '44px', borderRadius: '50%', flexShrink: 0,
+                    background: 'var(--haven-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'white', fontSize: '18px', fontWeight: 600,
+                  }}>
+                    {companionName.charAt(0)}
+                  </div>
+                )}
+                {/* Thread info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                          else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                        }}
+                        onBlur={commitEdit}
+                        style={{
+                          flex: 1, fontSize: '14px', fontWeight: 500,
+                          background: 'var(--haven-card)', border: '1px solid var(--haven-accent)',
+                          borderRadius: '6px', padding: '4px 8px', color: 'var(--haven-text)',
+                          outline: 'none', minWidth: 0,
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {thread.title || 'New conversation'}
+                        </span>
+                        <span style={{ fontSize: '11px', color: 'var(--haven-text-muted)', flexShrink: 0, marginLeft: '8px' }}>
+                          {formatTime(thread.last_message_at)}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {!isEditing && (
+                    <div style={{ fontSize: '12px', color: 'var(--haven-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      Tap to continue...
+                    </div>
+                  )}
+                </div>
+                {/* Per-row overflow menu — holds rename + delete behind a
+                    single ⋯ button so the thread list stays clean. Matches
+                    the chat-header pattern. */}
+                {!isEditing && (
+                  <div style={{ position: 'relative', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(menuOpenId === thread.id ? null : thread.id);
+                      }}
+                      style={{
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        color: 'var(--haven-text-muted)', opacity: 0.6, padding: '6px',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      title="More"
+                      aria-label="Thread actions"
+                    >
+                      <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="5" cy="12" r="1.6" />
+                        <circle cx="12" cy="12" r="1.6" />
+                        <circle cx="19" cy="12" r="1.6" />
+                      </svg>
+                    </button>
+                    {menuOpenId === thread.id && (
+                      <div
+                        style={{
+                          position: 'absolute', top: '100%', right: 0, marginTop: '4px',
+                          minWidth: '140px', zIndex: 10,
+                          background: 'var(--haven-surface)',
+                          border: '1px solid var(--haven-border)', borderRadius: '8px',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.3)', padding: '4px',
+                        }}
+                      >
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setMenuOpenId(null); startEdit(e, thread); }}
+                          style={{
+                            width: '100%', padding: '8px 12px', background: 'transparent',
+                            border: 'none', color: 'var(--haven-text)', fontSize: '13px',
+                            cursor: 'pointer', textAlign: 'left', borderRadius: '6px',
+                          }}
+                        >Rename</button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setMenuOpenId(null); handleDelete(e, thread.id); }}
+                          style={{
+                            width: '100%', padding: '8px 12px', background: 'transparent',
+                            border: 'none', color: '#f87171', fontSize: '13px',
+                            cursor: 'pointer', textAlign: 'left', borderRadius: '6px',
+                          }}
+                        >Delete</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 

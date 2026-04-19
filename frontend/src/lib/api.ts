@@ -83,6 +83,8 @@ async function del(path: string): Promise<void> {
 export const getThreads = () => get<Thread[]>('/api/threads');
 export const createThread = (title?: string) => post<{ id: string }>('/api/threads', { title });
 export const deleteThread = (id: string) => del(`/api/threads/${id}`);
+export const renameThread = (id: string, title: string) => put<{ success: boolean }>(`/api/threads/${id}`, { title });
+export const deleteMessage = (id: string) => del(`/api/messages/${id}`);
 
 // Messages
 export const getMessages = (threadId: string) => get<Message[]>(`/api/messages/${threadId}`);

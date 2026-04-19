@@ -682,7 +682,11 @@ async function* streamInference(
   }
 
   if (!response.ok || !response.body) {
-    throw new Error(`Inference failed: ${response.status}`);
+    // Peek the upstream body so whatever caller rendered this gets to see
+    // the actual provider error ("model X not found", "invalid key", etc.)
+    // instead of a meaningless status code.
+    const errBody = await response.text().catch(() => '');
+    throw new Error(`Inference failed: ${response.status} — ${errBody.slice(0, 300)}`);
   }
 
   const reader = response.body.getReader();
@@ -838,6 +842,17 @@ export default {
         const ALLOWED_PROVIDERS = ['openrouter', 'ollama', 'openai', 'anthropic', 'groq', 'xai', 'huggingface'];
         if (!ALLOWED_PROVIDERS.includes(provider)) provider = 'openrouter';
 
+        // Model-shape override. Ollama slugs look like `name:tag`
+        // (`gemma3:12b`, `qwen2.5:7b`, `kimi-k2-thinking:latest`) — no `/`.
+        // OpenRouter and every hosted API use `org/model`. If the frontend
+        // picked an Ollama-shaped model but provider says openrouter (stale
+        // localStorage, or the model selector didn't flip it), the upstream
+        // rejects with 400/500. Auto-correct to ollama when the shape is
+        // unambiguous.
+        if (provider === 'openrouter' && model.includes(':') && !model.includes('/')) {
+          provider = 'ollama';
+        }
+
         const chatCompanionId = getCompanionId(request);
 
         // Get or create thread (scoped to companion)
@@ -957,6 +972,20 @@ export default {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'complete', content: cleanResponse, model })}\n\n`));
               controller.enqueue(encoder.encode('data: [DONE]\n\n'));
             } catch (err) {
+              // Rollback the thread + user message we just inserted if this
+              // was a brand-new thread. Keeps the sidebar from piling up
+              // with orphaned "new conversation" rows every time inference
+              // fails (e.g. Ollama 500, key missing, etc). Existing threads
+              // keep their history; only the just-inserted user message is
+              // dropped so the user can retry without duplicates.
+              try {
+                if (!threadId) {
+                  // We created the thread this call — nuke it + messages (CASCADE).
+                  await env.DB.prepare('DELETE FROM threads WHERE id = ?').bind(activeThreadId).run();
+                } else {
+                  await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(userMsgId).run();
+                }
+              } catch { /* best-effort cleanup */ }
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: String(err) })}\n\n`));
             }
             controller.close();
@@ -1001,6 +1030,18 @@ export default {
         return json({ success: true });
       }
 
+      if (path.startsWith('/api/threads/') && request.method === 'PUT') {
+        const cid = getCompanionId(request);
+        const id = path.split('/')[3];
+        const body = await request.json() as { title?: string };
+        const newTitle = (body.title || '').trim().slice(0, 200);
+        if (!newTitle) return json({ error: 'title required' }, 400);
+        await env.DB.prepare(
+          'UPDATE threads SET title = ? WHERE id = ? AND companion_id = ?'
+        ).bind(newTitle, id, cid).run();
+        return json({ success: true });
+      }
+
       // ---- Messages (verify thread belongs to requesting companion) ----
       if (path.startsWith('/api/messages/') && request.method === 'GET') {
         const cid = getCompanionId(request);
@@ -1014,6 +1055,20 @@ export default {
           'SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC'
         ).bind(threadId).all();
         return json(messages.results || []);
+      }
+
+      // DELETE /api/messages/:id — scoped by joining through threads so a
+      // companion can't nuke another companion's messages by guessing UUIDs.
+      if (path.startsWith('/api/messages/') && request.method === 'DELETE') {
+        const cid = getCompanionId(request);
+        const messageId = path.split('/')[3];
+        const row = await env.DB.prepare(
+          'SELECT m.id, t.companion_id FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ?'
+        ).bind(messageId).first<{ id: string; companion_id: number }>();
+        if (!row) return json({ error: 'message not found' }, 404);
+        if (row.companion_id !== cid) return json({ error: 'message belongs to a different companion' }, 403);
+        await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(messageId).run();
+        return json({ success: true });
       }
 
       // ---- Companion (singular — v1.6 compat, operates on the active companion) ----

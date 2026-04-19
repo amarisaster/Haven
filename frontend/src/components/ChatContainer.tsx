@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Message } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
 import ChatMessages from './ChatMessages';
@@ -37,14 +37,19 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
+  const [userStatus, setUserStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
 
-  // Poll companion status
+  // Poll companion + user status from D1 (both live server-side so they stay
+  // consistent across devices / sessions).
   useEffect(() => {
     let active = true;
     const poll = async () => {
       try {
-        const s = await getCompanionStatus();
-        if (active) setCompanionStatus(s);
+        const [cs, us] = await Promise.all([getCompanionStatus(), getUserStatus()]);
+        if (active) {
+          setCompanionStatus(cs);
+          setUserStatus(us);
+        }
       } catch { /* silent */ }
     };
     poll();
@@ -216,8 +221,13 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
   }, [messages, threadId, selectedModel, selectedProvider]);
 
-  const handleDeleteMessage = useCallback((messageId: string) => {
+  const handleDeleteMessage = useCallback(async (messageId: string) => {
+    // Optimistic: drop from the list immediately. If the server delete
+    // fails (temp-id messages that never got persisted, network blip),
+    // swallow silently — the next getMessages() reconciles either way.
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    if (messageId.startsWith('temp-')) return;
+    try { await deleteMessage(messageId); } catch { /* reconciles on reload */ }
   }, []);
 
   const handleRegenerateMessage = useCallback((messageId: string) => {
@@ -384,7 +394,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               {localStorage.getItem('haven-user-name') || 'You'}
             </div>
             <div style={{ fontSize: '9px', color: 'var(--haven-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>
-              {localStorage.getItem('haven-user-status') || 'online'}
+              {userStatus.custom_status || userStatus.presence || 'online'}
             </div>
           </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
