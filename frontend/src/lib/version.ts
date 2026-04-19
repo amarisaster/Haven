@@ -1,7 +1,7 @@
 // Current app version. Bumped in lockstep with package.json and the README
 // release badge. The update-check reads this to decide whether a newer
 // GitHub release exists.
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.7.1';
 
 const GITHUB_LATEST_RELEASE = 'https://api.github.com/repos/amarisaster/Haven/releases/latest';
 const DISMISSED_KEY = 'haven-dismissed-update-version';
