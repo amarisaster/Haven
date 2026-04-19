@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.6.4-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.7.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -59,6 +59,13 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 ---
 
 ## What can it do?
+
+### Host a household
+- **Multiple companions, one Haven** — up to 10 companions per instance, each with their own identity, memories, threads, and project files. Switch between them with a tap.
+- **Companion grid home screen** — 2-column tile view of everyone who lives here. `+ Add Companion` to bring in a new one.
+- **Sandboxed per companion** — no accidental cross-talk. Each companion only sees their own threads and memories. Settings (API keys, MCP servers, provider config) stays global so you only configure once.
+- **Archive, don't delete** — companions can be hidden from the grid but never destroyed. You never lose a thread or a memory by accident.
+- **Export + import a whole companion** — Settings → Export this companion → drop the bundle into a fresh Haven instance and they arrive fully formed (identity + memories + file text). Perfect for backups or moving between deployments.
 
 ### Talk
 - Chat with your companion using any model — **Ollama Cloud, OpenRouter, OpenAI, Anthropic, Groq, xAI**, or local models
@@ -238,7 +245,7 @@ Yes. Haven has a native **Android app** — download the APK from the [latest re
 Your data lives on your own Cloudflare account. Haven has no analytics, no tracking, no external calls except to your chosen AI provider.
 
 **Can I have multiple companions?**
-Not yet in v1 — one companion per Haven instance. But you can deploy multiple instances.
+Yes — v1.7 added full multi-companion support. Each companion has their own identity, memories, threads, and project files, fully sandboxed from each other. Settings (MCP servers, API keys, provider config) stays global. Up to 10 companions per Haven instance.
 
 **How does memory work?**
 Haven stores your companion's identity (personality, voice, backstory) and loads it on every conversation. It's a file cabinet, not a brain — you define who your companion is, and Haven keeps it consistent. Advanced memory systems (salience, decay, emotional state) are on the roadmap.
@@ -272,6 +279,102 @@ npx wrangler pages deploy dist
 Download the latest APK from the [Releases page](https://github.com/amarisaster/Haven/releases) and install over your existing copy. Haven signs releases with a stable debug keystore, so updates install in-place without needing to uninstall first.
 
 If your Worker is an older version than your frontend, you'll see 404s on newer endpoints. Always redeploy the Worker when upgrading.
+
+---
+
+## Build your own auto-updating Android APK
+
+The APK on the Releases page points at my Pages deployment. That's fine for trying Haven out, but if you're self-hosting, you want an APK that points at **your** deployment — one that auto-updates whenever you redeploy your frontend.
+
+The trick is Capacitor's `server.url` option. Instead of bundling your HTML/JS into the APK, you point it at your live Pages URL. The APK becomes a thin native shell that loads your web frontend on every launch — so every frontend deploy is an instant "update" for the app.
+
+### Prerequisites
+
+- **Android Studio** (includes Android SDK) — [download](https://developer.android.com/studio)
+- **JDK 21** — Android Studio ships with a bundled JDK; the CLI build uses it automatically.
+- Your frontend already deployed to Cloudflare Pages (from the "Getting started" section above). You'll need its URL — something like `https://haven-abc.pages.dev`.
+
+### 1. Point Capacitor at your Pages URL
+
+Edit `frontend/capacitor.config.ts` and add `server.url`:
+
+```ts
+const config: CapacitorConfig = {
+  appId: 'com.yourname.haven',          // change from com.strydervalehouse.haven
+  appName: 'Haven',
+  webDir: 'dist',
+  server: {
+    url: 'https://haven-abc.pages.dev', // <-- your Pages URL
+    allowNavigation: ['*'],
+  },
+  android: {
+    allowMixedContent: true,
+  },
+};
+```
+
+Change `appId` to something unique (reverse-domain, e.g. `com.yourname.haven`). If you leave it as `com.strydervalehouse.haven` your APK will collide with the official release when both are installed on the same device.
+
+### 2. Build + sync
+
+```bash
+cd frontend
+npm install
+npm run build
+npx cap sync android
+```
+
+The `sync` step copies your updated `capacitor.config.ts` into the native Android project.
+
+### 3. Build the APK
+
+**Option A — Android Studio (GUI):**
+
+```bash
+npx cap open android
+```
+
+When Studio opens the project, let it finish Gradle sync, then: **Build** menu → **Build Bundle(s) / APK(s)** → **Build APK(s)**. When it finishes, click the "locate" link in the notification; the APK is at `frontend/android/app/build/outputs/apk/debug/app-debug.apk`.
+
+**Option B — Command line:**
+
+```bash
+cd android
+./gradlew assembleDebug      # Linux / macOS
+gradlew.bat assembleDebug    # Windows
+```
+
+Output lands at `frontend/android/app/build/outputs/apk/debug/app-debug.apk`.
+
+### 4. Install on your phone
+
+Either copy the APK over USB / cloud and tap to install, or with the phone plugged in via USB:
+
+```bash
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Android will warn about installing from outside the Play Store — approve it. Haven signs with a stable debug keystore (checked into the repo), so subsequent updates install in-place without requiring you to uninstall first.
+
+### 5. Ship updates without rebuilding the APK
+
+Because your APK just loads your Pages URL, you never need to rebuild it for app changes. Any time you:
+
+```bash
+cd frontend
+git pull origin main
+npm install
+npm run build
+npx wrangler pages deploy dist
+```
+
+…every Haven APK pointed at that URL picks up the new frontend on its next launch. Worker changes still need a separate deploy (`cd worker && npx wrangler deploy`).
+
+### Caveats
+
+- **First launch requires internet** since the APK is loading HTML from the network. A fully offline APK would need `webDir: 'dist'` with the bundled build instead of `server.url` — but then it won't auto-update.
+- **Your Pages URL must be HTTPS.** Capacitor's WebView blocks cleartext loads by default. Cloudflare Pages gives you HTTPS out of the box, so this is only a problem if you're pointing at a local dev server.
+- **App name + icon** come from `android/app/src/main/res/` — edit those files if you want to brand your install differently from the upstream release.
 
 ---
 
@@ -313,6 +416,19 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.7.0** — Multi-Companion Support
+
+Haven now hosts a household, not just one companion. Every companion gets their own sandbox — identity, memories, threads, and project files are fully isolated. Settings (MCP servers, API keys, provider config) stay global so you only configure once.
+
+- **Companion home grid** — new 2-column tile landing screen shows every companion. Tap a tile to enter their world. `+ Add Companion` tile at the end.
+- **Add Companion wizard** — three-step flow (Name → Identity → Appearance) creates a fresh companion with seeded identity rows. Paste a SillyTavern/TavernAI/Chub **character card JSON** at step 2 and the wizard parses personality, backstory, scenario, system prompt — all into the right identity types.
+- **Persistent companion switcher strip** — horizontal avatar rail above the thread list. Home button on the left, active companion rendered larger with accent border, tap another avatar to instantly switch. Collapses automatically when you only have one companion.
+- **Full data isolation** — every API endpoint that reads scoped data (identity, memories, threads, messages, people, important dates, files) now requires an `X-Companion-Id` header. Companions can't see each other's threads or memories even by accident.
+- **Per-companion project files** — each companion has their own Files panel in Settings. Upload PDFs, text, code — the extracted text is injected into *that companion's* system prompt only. Big files still live in R2, but only the companion you uploaded them to can "read" them.
+- **Archive, don't delete** — companions can be archived (hidden from the grid) but never hard-deleted, so you never lose a thread or memory accidentally. Restore via the archived-companions list. The default companion (id 1) can't be archived — at least one must always be active.
+- **Companion-project import/export** — Settings → "Export this companion" downloads a `companion-<name>.json` bundle with identity, memories, people, important dates, and file text (no binaries — the extracted text travels, the original bytes stay home). Drop that bundle into the Import wizard on any Haven instance and it restores as a brand-new companion, bypassing the thread-selection UI entirely. Non-companion JSON (ChatGPT/Claude/SillyTavern/thread exports) still flows through the existing thread-import path — Haven detects the bundle type automatically.
+- **10-companion soft cap** — the grid warns you before you create the 11th. Not a hard limit, just a "you sure?" moment, because context + identity management gets unwieldy past that.
 
 **v1.6.4** — Ollama Cloud Tool Calling Fix
 
@@ -411,10 +527,10 @@ Docs:
 
 ## What's coming
 
-- Multi-companion support
 - Local model support (Ollama local, llama.cpp)
 - Voice calls (real-time STT + TTS loop)
 - iOS app
+- In-app "new release available" banner
 
 ---
 

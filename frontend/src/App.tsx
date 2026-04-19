@@ -7,6 +7,7 @@ import ImportWizard from './components/ImportWizard';
 import CompanionGrid from './components/CompanionGrid';
 import AddCompanionWizard from './components/AddCompanionWizard';
 import Settings from './pages/Settings';
+import UpdateBanner from './components/UpdateBanner';
 
 type View = 'grid' | 'threads' | 'chat' | 'settings';
 
@@ -134,6 +135,8 @@ export default function App() {
 
   return (
     <div style={{ height: '100%', background: 'var(--haven-bg)' }}>
+      <UpdateBanner />
+
       {/* Companion grid (home) — v1.7 multi-companion landing */}
       {view === 'grid' && (
         <CompanionGrid

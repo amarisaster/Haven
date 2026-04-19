@@ -5,7 +5,7 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { autoDetectAndParse, type ImportResult } from '../lib/importers';
-import { createThread, updateCompanion, addIdentity, apiBase } from '../lib/api';
+import { createThread, updateCompanion, addIdentity, apiBase, importCompanion, setActiveCompanionId } from '../lib/api';
 
 interface ImportWizardProps {
   onClose: () => void;
@@ -19,6 +19,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
   const [importIdentity, setImportIdentity] = useState(true);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [importedCount, setImportedCount] = useState(0);
+  const [importKind, setImportKind] = useState<'threads' | 'companion'>('threads');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const parseJsonData = (data: any): ImportResult => {
@@ -39,7 +40,6 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
         let detectedSource: ImportResult['source'] = 'unknown';
         let identity: ImportResult['identity'];
 
-        // Find and parse all JSON files in the ZIP
         const jsonFiles = Object.entries(zip.files).filter(
           ([name, f]) => !f.dir && name.endsWith('.json')
         );
@@ -52,11 +52,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
           try {
             const text = await zipFile.async('text');
             const data = JSON.parse(text);
-
-            // ChatGPT exports: conversations.json is an array of conversations
-            // Some exports have multiple JSON files
             const parsed = parseJsonData(data);
-
             if (parsed.source !== 'unknown') detectedSource = parsed.source;
             if (parsed.identity && !identity) identity = parsed.identity;
             allThreads.push(...parsed.threads);
@@ -66,24 +62,41 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
           }
         }
 
-        const merged: ImportResult = {
-          source: detectedSource,
-          threads: allThreads,
-          identity,
-          errors: allErrors,
-        };
-        setResult(merged);
-        setSelectedThreads(new Set(merged.threads.map((_, i) => i)));
+        setResult({ source: detectedSource, threads: allThreads, identity, errors: allErrors });
+        setSelectedThreads(new Set(allThreads.map((_, i) => i)));
         setStep('preview');
-      } else {
-        // Regular JSON file
-        const text = await file.text();
-        const data = JSON.parse(text);
-        const parsed = parseJsonData(data);
-        setResult(parsed);
-        setSelectedThreads(new Set(parsed.threads.map((_, i) => i)));
-        setStep('preview');
+        return;
       }
+
+      // Non-ZIP: single JSON. Check for Haven companion-project bundle first
+      // (`haven_export_version` + `companion` at the top level) — those get
+      // routed to the companion-import endpoint which creates a brand-new
+      // companion (identity + memories + people + files) and we switch to
+      // them. Anything else falls through to the chat-import flow.
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      if (data && typeof data === 'object' && data.haven_export_version && data.companion) {
+        setImportKind('companion');
+        setStep('importing');
+        setProgress({ current: 0, total: 1 });
+        const res = await importCompanion(data);
+        if (!res?.id) {
+          setResult({ source: 'unknown', threads: [], errors: ['Companion import failed.'] });
+          setStep('preview');
+          return;
+        }
+        setActiveCompanionId(res.id);
+        setImportedCount(1);
+        setProgress({ current: 1, total: 1 });
+        setStep('done');
+        return;
+      }
+
+      const parsed = parseJsonData(data);
+      setResult(parsed);
+      setSelectedThreads(new Set(parsed.threads.map((_, i) => i)));
+      setStep('preview');
     } catch {
       setResult({
         source: 'unknown',
@@ -350,7 +363,9 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
                 Welcome home
               </h3>
               <p style={{ fontSize: '13px', color: 'var(--haven-text-secondary)', marginBottom: '24px' }}>
-                {importedCount} thread{importedCount !== 1 ? 's' : ''} imported successfully.
+                {importKind === 'companion'
+                  ? 'Companion imported and made active.'
+                  : `${importedCount} thread${importedCount !== 1 ? 's' : ''} imported successfully.`}
               </p>
               <button
                 onClick={() => onComplete(importedCount)}

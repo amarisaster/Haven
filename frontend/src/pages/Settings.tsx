@@ -6,6 +6,7 @@ import {
   getIdentity, addIdentity, deleteIdentity,
   uploadFile, getUserStatus, setUserStatus, apiBase,
   archiveCompanion, setActiveCompanionId, activeCompanionId,
+  exportCompanionUrl,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -431,10 +432,28 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             </label>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <button onClick={saveCompanion} disabled={compSaving} style={btnStyle}>
             {compSaving ? 'Saving...' : 'Save'}
           </button>
+          {/* Export companion — downloads a JSON bundle with identity /
+              memories / people / important_dates / files (text only) so
+              the companion can be re-imported into another Haven instance.
+              Threads intentionally not included. */}
+          <a
+            href={exportCompanionUrl(compId)}
+            download
+            style={{
+              ...btnStyle,
+              background: 'transparent',
+              border: '1px solid var(--haven-border)',
+              color: 'var(--haven-text-secondary)',
+              textDecoration: 'none',
+              display: 'inline-block',
+            }}
+          >
+            Export this companion
+          </a>
           {compMsg && <span style={{ fontSize: '12px', color: compMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{compMsg}</span>}
         </div>
 
