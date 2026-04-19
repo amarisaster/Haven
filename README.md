@@ -99,7 +99,7 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 
 ### Feel real
 - **Multi-provider TTS** — ElevenLabs, Hume, Groq, Kokoro (local), browser voices, or Cloud TTS via Workers AI. Pick what sounds right.
-- **Speech-to-text** — talk to them with your voice
+- **Speech-to-text** — talk to them with your voice. Uses your browser's native Web Speech Recognition API, so there's no API key to configure. Tap the mic, grant permission once, start talking; tap again to stop. Works in **Chrome, Edge, Safari, and most Chromium-based browsers** (including the Android PWA + WebView, where it hands off to Google's on-device recognizer). **Firefox does not support it** — in Firefox the mic button will tell you so rather than silently fail. Quality is "good enough to capture a sentence" — accents and fast speech can fumble — but since it's free and built in, it's there when you want it.
 - **Message reactions** — because sometimes a heart says more than words
 - **GIF search** — built-in GIPHY picker. GIFs render inline as animated images, not URLs
 - **Custom stickers** — upload your own stickers, stored locally in IndexedDB
