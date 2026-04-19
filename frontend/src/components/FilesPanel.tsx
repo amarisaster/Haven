@@ -99,7 +99,7 @@ export default function FilesPanel({ companionId }: FilesPanelProps) {
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,.txt,.md,.json,.csv,.py,.js,.ts,.tsx,.jsx,.rs,.go,.java,.c,.cpp,.h,.css,.html,.xml,.yaml,.yml,.toml,.ini,.env,.sh,.log"
+        accept=".pdf,.docx,.epub,.txt,.md,.json,.csv,.py,.js,.ts,.tsx,.jsx,.rs,.go,.java,.c,.cpp,.h,.css,.html,.xml,.yaml,.yml,.toml,.ini,.env,.sh,.log"
         onChange={onPick}
         className="hidden"
       />

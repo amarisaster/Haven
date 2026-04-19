@@ -24,7 +24,7 @@ export interface ImportedIdentity {
 }
 
 export interface ImportResult {
-  source: 'chatgpt' | 'claude' | 'sillytavern' | 'haven' | 'unknown';
+  source: 'chatgpt' | 'claude' | 'sillytavern' | 'haven' | 'nexus-md' | 'unknown';
   threads: ImportedThread[];
   identity?: ImportedIdentity;
   errors: string[];
@@ -247,6 +247,111 @@ export function parseHaven(data: any): ImportResult {
     : undefined;
 
   return { source: 'haven', threads, identity, errors };
+}
+
+// ============================================================
+// Nexus AI Chat Importer — Obsidian plugin markdown export
+// ============================================================
+//
+// Pattern (each message block):
+//   >[!nexus_user] **User** - MM/DD/YYYY at H:MM AM/PM
+//   > line 1
+//   > line 2
+//   <!-- UID: ... -->
+//
+// Alternating user / assistant blocks, sometimes separated by --- fences. We
+// split the body on the callout markers and walk the blocks in order.
+
+const NEXUS_BLOCK_RE = /^>\s*\[!nexus_(user|agent)\][^\n]*$/gim;
+
+export function isNexusChatMarkdown(text: string): boolean {
+  // Two signals: the plugin tag in frontmatter OR a nexus_user / nexus_agent
+  // callout. Either alone is enough — sometimes frontmatter got stripped.
+  return /nexus-ai-chat-importer/i.test(text) ||
+         /^>\s*\[!nexus_(user|agent)\]/m.test(text);
+}
+
+export function parseNexusChatMarkdown(text: string, fallbackTitle?: string): ImportResult {
+  const errors: string[] = [];
+  const messages: ImportedThread['messages'] = [];
+
+  // Title — prefer the "# Title:" line, then frontmatter aliases, then the
+  // filename the caller passed in.
+  let title = fallbackTitle || 'Imported conversation';
+  const titleLine = text.match(/^#\s+Title:\s*(.+)$/m);
+  if (titleLine) title = titleLine[1].trim();
+  else {
+    const alias = text.match(/^aliases:\s*"?([^"\n]+)"?$/m);
+    if (alias) title = alias[1].trim();
+  }
+
+  // Walk each callout block. A block starts at the match index and ends at
+  // the next match (or EOF). Content lines are the `> ` prefixed ones; we
+  // stop at the UID marker, the --- fence, or the next callout.
+  const markers: Array<{ index: number; role: 'user' | 'companion'; timestamp?: string }> = [];
+  const timestampRe = /\*\*(?:User|Assistant)\*\*\s*-\s*([\d\/]+\s+at\s+[\d:]+\s*[AP]M)/;
+  // Manual iteration because we need both the role capture AND the trailing
+  // timestamp from the same line.
+  let m: RegExpExecArray | null;
+  NEXUS_BLOCK_RE.lastIndex = 0;
+  while ((m = NEXUS_BLOCK_RE.exec(text)) !== null) {
+    const line = m[0];
+    const role: 'user' | 'companion' = m[1] === 'agent' ? 'companion' : 'user';
+    const tsMatch = line.match(timestampRe);
+    let iso: string | undefined;
+    if (tsMatch) {
+      // ChatGPT timestamp format: "04/27/2025 at 2:20 PM" — parse best-effort.
+      const d = new Date(tsMatch[1].replace(' at ', ' '));
+      if (!isNaN(d.getTime())) iso = d.toISOString();
+    }
+    markers.push({ index: m.index, role, timestamp: iso });
+  }
+
+  if (markers.length === 0) {
+    errors.push('No nexus_user / nexus_agent blocks found in file.');
+    return { source: 'nexus-md', threads: [], errors };
+  }
+
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i].index;
+    const end = i + 1 < markers.length ? markers[i + 1].index : text.length;
+    const block = text.slice(start, end);
+
+    // Body lines: every `> ` line AFTER the first (the callout header itself).
+    // Stop at the UID marker or --- fence.
+    const bodyLines: string[] = [];
+    const lines = block.split('\n');
+    let seenHeader = false;
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      if (!seenHeader) {
+        if (/^>\s*\[!nexus_(user|agent)\]/i.test(line)) {
+          seenHeader = true;
+          continue;
+        }
+      } else {
+        if (/^<!--\s*UID:/i.test(line)) break;
+        if (/^---\s*$/.test(line)) break;
+        if (/^>\s*\[!nexus_(user|agent)\]/i.test(line)) break;
+        // Strip the leading `> ` (or `>` alone for blank quote lines).
+        if (line.startsWith('> ')) bodyLines.push(line.slice(2));
+        else if (line === '>') bodyLines.push('');
+        else if (line.length > 0) bodyLines.push(line);
+      }
+    }
+
+    const content = bodyLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (content) {
+      messages.push({
+        role: markers[i].role,
+        content,
+        timestamp: markers[i].timestamp,
+      });
+    }
+  }
+
+  const threads = messages.length > 0 ? [{ title, messages }] : [];
+  return { source: 'nexus-md', threads, errors };
 }
 
 // ============================================================

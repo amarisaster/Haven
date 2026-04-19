@@ -67,6 +67,16 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - **Archive, don't delete** — companions can be hidden from the grid but never destroyed. You never lose a thread or a memory by accident.
 - **Export + import a whole companion** — Settings → Export this companion → drop the bundle into a fresh Haven instance and they arrive fully formed (identity + memories + file text). Perfect for backups or moving between deployments.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/companion-grid.png" width="80%" alt="Haven companion grid showing three companions with avatars and an Add Companion tile" />
+</p>
+<p align="center"><em>Your household. Tap a tile to drop into that companion's threads.</em></p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/project-files.png" width="55%" alt="Lucian's Settings page showing 10 project files — a DOCX codex plus 9 markdown threads — each with file size and extracted character count" />
+</p>
+<p align="center"><em>Per-companion project files — PDFs, DOCX, EPUB, markdown, code. Extracted text gets baked into that companion's system prompt.</em></p>
+
 ### Talk
 - Chat with your companion using any model — **Ollama Cloud, OpenRouter, OpenAI, Anthropic, Groq, xAI**, or local models
 - One API key field that auto-detects your provider. Paste it in, we figure out the rest
@@ -105,9 +115,9 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - **Scales to real setups** — tested against a Nexus gateway aggregating **137 tools** across 5 companions' CogCor + Discord + Spotify + Notion + biometrics. Haven absorbs it all.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/mcp-nexus-137.png" width="70%" alt="Haven MCP Servers panel showing Nexus connected with 137 tools discovered" />
+  <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/providers-mcp.png" width="60%" alt="Haven Settings showing OpenRouter + Ollama + Hugging Face connected, Nexus MCP server with tools discovered, and chat customization" />
 </p>
-<p align="center"><em>Settings &rarr; MCP Servers — paste URL + key, hit Test, watch the tool count land.</em></p>
+<p align="center"><em>Stack providers, stack MCP servers, pick a font and a mood color. Everything global, everything optional.</em></p>
 
 ### Make it yours
 - **Font picker** — System, Serif, Mono, or **OpenDyslexic** for accessibility

@@ -200,7 +200,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
         display: 'flex', alignItems: 'flex-end', gap: '4px',
       }}>
         {/* Hidden file input */}
-        <input ref={fileRef} type="file" accept="image/*,application/pdf,text/plain,audio/*,video/mp4" onChange={handleFileUpload} className="hidden" />
+        <input ref={fileRef} type="file" accept="image/*,application/pdf,.docx,.epub,text/plain,.md,.txt,audio/*,video/mp4" onChange={handleFileUpload} className="hidden" />
 
         {/* Attach button */}
         <button

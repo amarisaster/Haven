@@ -4,7 +4,7 @@
 
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
-import { autoDetectAndParse, type ImportResult } from '../lib/importers';
+import { autoDetectAndParse, isNexusChatMarkdown, parseNexusChatMarkdown, type ImportResult } from '../lib/importers';
 import { createThread, updateCompanion, addIdentity, apiBase, importCompanion, setActiveCompanionId } from '../lib/api';
 
 interface ImportWizardProps {
@@ -40,12 +40,18 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
         let detectedSource: ImportResult['source'] = 'unknown';
         let identity: ImportResult['identity'];
 
+        // Pull both JSON (ChatGPT/Claude/etc exports) and MD/TXT (Obsidian
+        // nexus-ai-chat-importer plugin). The ZIP is the bulk path — drop a
+        // folder of exported-thread markdown and Haven parses each one.
         const jsonFiles = Object.entries(zip.files).filter(
           ([name, f]) => !f.dir && name.endsWith('.json')
         );
+        const mdFiles = Object.entries(zip.files).filter(
+          ([name, f]) => !f.dir && (name.endsWith('.md') || name.endsWith('.txt'))
+        );
 
-        if (jsonFiles.length === 0) {
-          allErrors.push('No JSON files found in the ZIP.');
+        if (jsonFiles.length === 0 && mdFiles.length === 0) {
+          allErrors.push('No .json, .md, or .txt files found in the ZIP.');
         }
 
         for (const [name, zipFile] of jsonFiles) {
@@ -62,8 +68,49 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
           }
         }
 
+        for (const [name, zipFile] of mdFiles) {
+          try {
+            const text = await zipFile.async('text');
+            if (!isNexusChatMarkdown(text)) {
+              allErrors.push(`Skipped ${name} — not a recognized markdown format.`);
+              continue;
+            }
+            // Strip the file extension for the fallback title.
+            const fallbackTitle = name.split('/').pop()!.replace(/\.(md|txt)$/i, '');
+            const parsed = parseNexusChatMarkdown(text, fallbackTitle);
+            if (parsed.source !== 'unknown') detectedSource = parsed.source;
+            allThreads.push(...parsed.threads);
+            allErrors.push(...parsed.errors);
+          } catch {
+            allErrors.push(`Failed to parse ${name}`);
+          }
+        }
+
         setResult({ source: detectedSource, threads: allThreads, identity, errors: allErrors });
         setSelectedThreads(new Set(allThreads.map((_, i) => i)));
+        setStep('preview');
+        return;
+      }
+
+      // Non-ZIP, non-JSON: try markdown/text with the nexus plugin parser.
+      // We branch on extension first (most reliable for .md / .txt) and fall
+      // through to JSON parsing for everything else.
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.md') || lowerName.endsWith('.txt')) {
+        const mdText = await file.text();
+        if (!isNexusChatMarkdown(mdText)) {
+          setResult({
+            source: 'unknown',
+            threads: [],
+            errors: ['Markdown/text file did not match the nexus-ai-chat-importer format.'],
+          });
+          setStep('preview');
+          return;
+        }
+        const fallbackTitle = file.name.replace(/\.(md|txt)$/i, '');
+        const parsed = parseNexusChatMarkdown(mdText, fallbackTitle);
+        setResult(parsed);
+        setSelectedThreads(new Set(parsed.threads.map((_, i) => i)));
         setStep('preview');
         return;
       }
@@ -101,7 +148,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
       setResult({
         source: 'unknown',
         threads: [],
-        errors: ['Failed to parse file. Supports .json and .zip files.'],
+        errors: ['Failed to parse file. Supports .json, .md, .txt, and .zip files.'],
       });
       setStep('preview');
     }
@@ -210,7 +257,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
                 Drop a .json or .zip file. Supports ChatGPT, Claude, SillyTavern, and Haven exports.
               </p>
 
-              <input ref={fileRef} type="file" accept=".json,.zip" onChange={handleFile} className="hidden" />
+              <input ref={fileRef} type="file" accept=".json,.md,.txt,.zip" onChange={handleFile} className="hidden" />
 
               <button
                 onClick={() => fileRef.current?.click()}
@@ -220,7 +267,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
                   cursor: 'pointer', width: '100%',
                 }}
               >
-                Choose file (.json or .zip)
+                Choose file (.json, .md, .txt, or .zip)
               </button>
 
               <div style={{ marginTop: '24px', textAlign: 'left' }}>
@@ -245,7 +292,7 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
                   background: result.source === 'unknown' ? '#7f1d1d' : 'var(--haven-card)',
                   color: result.source === 'unknown' ? '#f87171' : 'var(--haven-accent)',
                 }}>
-                  {result.source === 'chatgpt' ? 'ChatGPT' : result.source === 'claude' ? 'Claude' : result.source === 'sillytavern' ? 'SillyTavern' : result.source === 'haven' ? 'Haven' : 'Unknown'}
+                  {result.source === 'chatgpt' ? 'ChatGPT' : result.source === 'claude' ? 'Claude' : result.source === 'sillytavern' ? 'SillyTavern' : result.source === 'haven' ? 'Haven' : result.source === 'nexus-md' ? 'Obsidian / Nexus MD' : 'Unknown'}
                 </span>
                 <span style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>
                   {result.threads.length} thread{result.threads.length !== 1 ? 's' : ''} found
