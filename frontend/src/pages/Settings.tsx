@@ -9,6 +9,7 @@ import {
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
+import FilesPanel from '../components/FilesPanel';
 
 interface SettingsProps {
   onImport?: () => void;
@@ -435,6 +436,16 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             {compSaving ? 'Saving...' : 'Save'}
           </button>
           {compMsg && <span style={{ fontSize: '12px', color: compMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{compMsg}</span>}
+        </div>
+
+        {/* Project Files — v1.7. Attach files whose extracted text gets
+            injected into this companion's system prompt on every chat. */}
+        <div style={{
+          marginTop: '20px', paddingTop: '16px',
+          borderTop: '1px solid var(--haven-border)',
+        }}>
+          <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>Project Files</h4>
+          <FilesPanel companionId={compId} />
         </div>
 
         {/* Archive companion — v1.7 multi-companion. The default seed
