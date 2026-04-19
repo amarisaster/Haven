@@ -54,6 +54,11 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 </p>
 <p align="center"><em>Setup in four steps — name, API key, personality, appearance. Done.</em></p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/chat-lucian.png" width="85%" alt="Haven chat view — starry wallpaper, companion and user avatars online, model picker, attach and GIF controls" />
+</p>
+<p align="center"><em>Then you land here. Starfield wallpaper, your companion online, model picker in the corner, attach / GIF / voice ready.</em></p>
+
 > **A note on what Haven is:** Haven is a **chat interface with identity persistence** — not a full memory system. It gives your companion a consistent personality across conversations, but it doesn't have advanced features like memory salience, emotional state tracking, or automatic context recall. Think of it as a solid foundation. You bring your companion's character, Haven keeps it loaded, and over time you can build more sophisticated systems on top of it. Start simple. Grow from there.
 
 ---
