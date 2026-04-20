@@ -110,6 +110,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let responseModel = '';
     let toolCalls: ToolCallRecord[] = [];
     let notice: string | undefined;
+    let realUserId: string | undefined;
+    let realCompanionId: string | undefined;
 
     try {
       for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image)) {
@@ -170,6 +172,11 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               fullContent = event.content;
               setStreamingContent(fullContent);
             }
+            // Capture real D1 UUIDs so delete/react/edit work in this
+            // session without waiting for a thread reload. Optimistic IDs
+            // (temp-*, comp-*) don't exist server-side.
+            if ((event as any).user_message_id) realUserId = (event as any).user_message_id;
+            if ((event as any).companion_message_id) realCompanionId = (event as any).companion_message_id;
             break;
           case 'error':
             setError(event.message || 'Stream error');
@@ -180,11 +187,26 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       setError(err instanceof Error ? err.message : 'Failed to send message');
     }
 
-    // Finalize: add companion message
+    // Swap the optimistic user temp-id for the D1 UUID so delete/react/edit
+    // hit the right row. Done in a single setMessages to avoid two renders.
+    if (realUserId) {
+      setMessages((prev) => prev.map((m) =>
+        m.id === userMsg.id ? { ...m, id: realUserId! } : m
+      ));
+    }
+
+    // Finalize: add companion message if ANY of — text content, tool calls,
+    // or a notice — arrived. Previously we only added the bubble when
+    // fullContent was truthy, which silently dropped tool-only responses
+    // (model fires MCP tools without a follow-up text reply → empty
+    // content → nothing renders).
     setStreamingContent(null);
-    if (fullContent) {
+    if (fullContent || toolCalls.length > 0 || notice) {
       const companionMsg: Message = {
-        id: `comp-${Date.now()}`,
+        // Prefer the D1 UUID when the worker sent it (delete/react/edit
+        // work immediately). Fall back to a local id for optimistic display
+        // if the complete event arrived malformed.
+        id: realCompanionId || `comp-${Date.now()}`,
         thread_id: currentThreadId || '',
         role: 'companion',
         content: fullContent,
@@ -194,7 +216,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, companionMsg]);
-      notifyCompanionMessage(companionName, fullContent);
+      if (fullContent) notifyCompanionMessage(companionName, fullContent);
     }
   }, [threadId, selectedModel, selectedProvider, onThreadCreated]);
 
@@ -216,6 +238,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
 
     let fullContent = '';
     let responseModel = '';
+    let toolCalls: ToolCallRecord[] = [];
+    let notice: string | undefined;
 
     try {
       for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider)) {
@@ -226,12 +250,22 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               setStreamingContent(fullContent);
             }
             break;
+          case 'tools': {
+            const results = (event.results as any[]) || [];
+            toolCalls = results.map(r => ({
+              name: r?.name || r?.tool_name || 'tool',
+              server: r?.server_name || r?.server,
+              ok: r?.ok !== false && !r?.error,
+            }));
+            break;
+          }
+          case 'notice':
+            if (typeof (event as any).message === 'string') {
+              notice = (event as any).message;
+            }
+            break;
           case 'complete':
             responseModel = event.model || selectedModel;
-            // Worker strips [react: emoji] / <think> blocks and sends the
-            // CLEAN text here. Prefer it over the chunk-accumulated content
-            // so the prefix doesn't stay visible in the bubble after
-            // streaming ends.
             if (typeof event.content === 'string' && event.content.length > 0) {
               fullContent = event.content;
               setStreamingContent(fullContent);
@@ -247,17 +281,19 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
 
     setStreamingContent(null);
-    if (fullContent) {
+    if (fullContent || toolCalls.length > 0 || notice) {
       const companionMsg: Message = {
         id: `comp-${Date.now()}`,
         thread_id: threadId || '',
         role: 'companion',
         content: fullContent,
         model: responseModel || selectedModel,
+        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        notice,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, companionMsg]);
-      notifyCompanionMessage(companionName, fullContent);
+      if (fullContent) notifyCompanionMessage(companionName, fullContent);
     }
   }, [messages, threadId, selectedModel, selectedProvider]);
 
@@ -270,7 +306,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     try { await deleteMessage(messageId); } catch { /* reconciles on reload */ }
   }, []);
 
-  const handleRegenerateMessage = useCallback((messageId: string) => {
+  const handleRegenerateMessage = useCallback(async (messageId: string) => {
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return;
 
@@ -281,8 +317,29 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
     if (userIdx === -1) return;
 
-    const userContent = messages[userIdx].content;
-    setMessages(messages.slice(0, idx));
+    const userMsgAtIdx = messages[userIdx];
+    const companionMsgAtIdx = messages[idx];
+    const userContent = userMsgAtIdx.content;
+
+    // Delete the old user + companion rows from D1 so handleSend's re-insert
+    // doesn't leave duplicates. Worker pulls ALL messages on each chat turn,
+    // so stale rows would get replayed to the model. Skip IDs that are still
+    // optimistic (temp-/comp-) — those never persisted.
+    const toDelete: string[] = [];
+    if (!userMsgAtIdx.id.startsWith('temp-') && !userMsgAtIdx.id.startsWith('comp-')) {
+      toDelete.push(userMsgAtIdx.id);
+    }
+    if (!companionMsgAtIdx.id.startsWith('temp-') && !companionMsgAtIdx.id.startsWith('comp-')) {
+      toDelete.push(companionMsgAtIdx.id);
+    }
+    for (const id of toDelete) {
+      try { await deleteMessage(id); } catch { /* ignore, reconciles on reload */ }
+    }
+
+    // Truncate UI before the user message so handleSend's optimistic insert
+    // doesn't double-up. handleSend re-adds the user turn + fires a fresh
+    // reply.
+    setMessages(messages.slice(0, userIdx));
     setTimeout(() => handleSend(userContent), 50);
   }, [messages, handleSend]);
 
@@ -351,7 +408,14 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{companionName}</div>
-            <div style={{ fontSize: '9px', color: 'var(--haven-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>
+            <div
+              title={companionStatus.custom_status || companionStatus.presence || 'online'}
+              style={{
+                fontSize: '10px', color: 'var(--haven-text-secondary)', lineHeight: '1.3',
+                display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                overflow: 'hidden', maxWidth: '320px', wordBreak: 'break-word',
+              }}
+            >
               {companionStatus.custom_status || companionStatus.presence || 'online'}
             </div>
           </div>

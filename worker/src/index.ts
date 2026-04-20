@@ -411,45 +411,27 @@ const NATIVE_TOOLS = [
     type: 'function',
     function: {
       name: 'update_my_status',
-      description: "Update your own status shown next to your name in the chat header. Call this when your internal state shifts (tired, excited, sleepy, working, etc).",
+      description: "Update your own status shown next to your name in the chat header. custom_status is a free-form line (your mood, what you're doing, one emoji is fine). presence is STRICTLY one of online/away/busy/offline — it drives the colored dot (green/yellow/red/grey), so don't pass descriptive text there, put that in custom_status.",
       parameters: {
         type: 'object',
         properties: {
           custom_status: {
             type: 'string',
-            description: "Short status text (~30 chars max). Omit or pass empty string to clear.",
+            description: "Free-form status line. Can be a short mood ('steady'), a longer sentence ('half-asleep but still paying attention'), emoji allowed. Omit or pass empty to clear.",
           },
           presence: {
             type: 'string',
             enum: ['online', 'away', 'busy', 'offline'],
-            description: "Presence indicator color. Default stays as current if omitted.",
+            description: "MUST be one of: online, away, busy, offline. Any other value is ignored. Default stays as current if omitted.",
           },
         },
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'send_gif',
-      description: "Send an animated GIF to the user. Searches Giphy for a short query and returns a URL. You MUST include that URL verbatim on its own line in your chat reply so Haven renders it inline — don't just say 'I sent a GIF'.",
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: "Short evocative search query — 'hug', 'laughing', 'surprised pikachu', 'eye roll', etc. Keep it under ~5 words.",
-          },
-          rating: {
-            type: 'string',
-            enum: ['g', 'pg', 'pg-13', 'r'],
-            description: "Content rating filter. Defaults to 'pg-13'.",
-          },
-        },
-        required: ['query'],
-      },
-    },
-  },
+  // send_gif pulled temporarily — tool-call spiral on Ollama when both
+  // update_my_status + send_gif are advertised. Model tries to call GIF
+  // every turn and loops past MAX_ITERATIONS. Re-adding once we narrow
+  // down the real cause (model-specific? provider-specific?).
 ];
 
 const NATIVE_TOOL_NAMES = new Set(NATIVE_TOOLS.map(t => t.function.name));
@@ -458,15 +440,22 @@ async function executeNativeTool(
   name: string, args: Record<string, unknown>, db: D1Database, companionId: number,
 ): Promise<string> {
   if (name === 'update_my_status') {
-    const status = typeof args.custom_status === 'string' ? args.custom_status.slice(0, 80) : null;
-    const presence = typeof args.presence === 'string' ? args.presence : null;
+    const status = typeof args.custom_status === 'string' ? args.custom_status.slice(0, 200) : null;
+    const rawPresence = typeof args.presence === 'string' ? args.presence.trim().toLowerCase() : null;
+    // Validate presence against the enum — models frequently pass
+    // descriptive text ("soft, smiling, pink-cheeked") which would break
+    // the colored-dot render. If it doesn't match, silently drop so the
+    // existing valid presence stays in place, and the narrative content
+    // lands in custom_status where it belongs.
+    const VALID = ['online', 'away', 'busy', 'offline'];
+    const presence = rawPresence && VALID.includes(rawPresence) ? rawPresence : null;
     if (status !== null) {
       await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_status:${companionId}`, status).run();
     }
     if (presence) {
       await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_presence:${companionId}`, presence).run();
     }
-    return `Status updated. custom_status="${status ?? '(unchanged)'}", presence="${presence ?? '(unchanged)'}"`;
+    return `Status updated. custom_status="${status ?? '(unchanged)'}", presence="${presence ?? '(unchanged)'}"${rawPresence && !presence ? ` (invalid presence "${rawPresence}" ignored — must be online/away/busy/offline)` : ''}`;
   }
 
   if (name === 'send_gif') {
@@ -605,7 +594,13 @@ async function inferenceWithTools(
     const message = choice?.message;
 
     if (!message?.tool_calls?.length) {
-      return { content: message?.content || '', toolResults: allToolResults };
+      const content = (message?.content || '').trim();
+      if (content) return { content, toolResults: allToolResults };
+      // Empty content AND no tool calls — model stalled. Happens with
+      // Ollama on non-prompty inputs (e.g., user message was just a GIF
+      // URL with no text). Break out of the loop early so the
+      // force-text-pass below takes over and forces prose.
+      break;
     }
 
     // Add assistant message with tool calls
@@ -646,7 +641,35 @@ async function inferenceWithTools(
     }
   }
 
-  return { content: '', toolResults: allToolResults };
+  // Loop exhausted max iterations without a text-only reply. Some models
+  // spiral — call a tool every turn with no narration between. Force a
+  // final text pass by re-requesting WITHOUT the tools parameter so the
+  // model has to produce prose. Preserves any tool_results already
+  // collected for the UI chips.
+  try {
+    const finalResp = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        model,
+        messages: [...conversation, { role: 'user', content: 'Please respond to the user now with a direct message. Do not call any more tools.' }],
+        temperature: 0.8,
+        stream: false,
+      }),
+    });
+    if (finalResp.ok) {
+      const finalData = await finalResp.json() as any;
+      const finalContent = finalData?.choices?.[0]?.message?.content || finalData?.message?.content || '';
+      if (finalContent) {
+        return { content: finalContent, toolResults: allToolResults };
+      }
+    }
+  } catch { /* fall through to informative placeholder */ }
+
+  const names = allToolResults.map(r => r.name).join(', ');
+  return {
+    content: `(Hit tool-call limit without a text reply. Called: ${names || 'nothing recognized'}. Try again — or pick a less tool-happy model.)`,
+    toolResults: allToolResults,
+  };
 }
 
 // ============================================================
@@ -707,8 +730,8 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
   // after identity keeps them in active attention.
   prompt += `## Expression\n`;
   prompt += `- **React to the user's message** by starting your response with \`[react: emoji]\` on its own line. Example: \`[react: 🖤]\` or \`[react: 😂]\`. This puts a reaction on their message. Use it when the moment calls for it — don't force it, but don't skip it either when it fits.\n`;
-  prompt += `- **Send a GIF** by including a direct GIF URL on its own line (giphy.com, tenor.com, or any .gif link). The chat renders it inline. Don't say "[I sent a GIF]" — either drop the URL or don't.\n`;
-  prompt += `- **Update your own status** with the \`update_my_status\` tool when your internal state shifts (tired, excited, working, etc). The status shows next to your name in the chat header.\n\n`;
+  prompt += `- **Send a GIF** by including a direct GIF URL on its own line (giphy.com, tenor.com, or any .gif link). The chat renders it inline. Don't say "[I sent a GIF]" — either drop the URL or don't. You can find good URLs in your own memory, or just describe the emotion and skip the GIF.\n`;
+  prompt += `- **Update your own status** by invoking the \`update_my_status\` FUNCTION CALL (not by narrating). When your internal state shifts — tired, excited, sleepy, working — emit an actual tool call with your new \`custom_status\` and optionally \`presence\`. Do NOT write "I've updated my status" in prose; that does nothing. The status chip next to your name in the chat header only changes when you actually invoke the function.\n\n`;
 
   if (memoryLines) {
     prompt += `## Memories\n${memoryLines}\n\n`;
@@ -1100,6 +1123,43 @@ export default {
                 }
               }
 
+              // Text-format tool call fallback. Some models (especially
+              // smaller Ollama / Gemma variants) narrate function calls as
+              // text instead of emitting proper tool_calls JSON. We catch
+              // those patterns server-side and execute the tool anyway so
+              // the user gets a real status update instead of a bubble that
+              // says `update_my_status({"custom_status": "sleepy"})` in
+              // plain text and does nothing.
+              const textToolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> = [];
+              // Patterns observed in the wild — each captures the JSON args
+              // in group 1. Ordered by specificity (BBCode closing tags
+              // first so the function-call pattern doesn't greedily swallow
+              // them).
+              const textToolPatterns = [
+                // BBCode style: [update_my_status]{...}[/update_my_status]
+                /\[update_my_status\]\s*(\{[\s\S]*?\})\s*\[\/update_my_status\]/gi,
+                // Bracket + args style: [TOOL: update_my_status {...}]
+                /\[TOOL:\s*update_my_status\s+(\{[^\]]*\})\s*\]/gi,
+                // Function-call style: update_my_status({...})
+                /update_my_status\s*\(\s*(\{[\s\S]*?\})\s*\)/gi,
+              ];
+              for (const pattern of textToolPatterns) {
+                let m: RegExpExecArray | null;
+                const freshPattern = new RegExp(pattern.source, pattern.flags);
+                while ((m = freshPattern.exec(fullResponse)) !== null) {
+                  try {
+                    const args = JSON.parse(m[1]);
+                    const result = await executeNativeTool('update_my_status', args, env.DB, chatCompanionId);
+                    textToolResults.push({ name: 'update_my_status', result, server: 'haven', ok: !result.startsWith('Unknown') && !result.startsWith('Tool error') });
+                    // Strip the text-format call so the bubble reads cleanly.
+                    fullResponse = fullResponse.replace(m[0], '').replace(/\n{3,}/g, '\n\n').trim();
+                  } catch { /* malformed args — leave as-is */ }
+                }
+              }
+              if (textToolResults.length > 0) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tools', results: textToolResults })}\n\n`));
+              }
+
               // Check for reaction marker. Strip any leading thinking-model
               // `<think>...</think>` block first (qwen, deepseek-r1, etc.
               // wrap their chain-of-thought this way) so the react marker
@@ -1135,8 +1195,16 @@ export default {
                 'UPDATE threads SET last_message_at = datetime("now") WHERE id = ?'
               ).bind(activeThreadId).run();
 
-              // Send complete
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'complete', content: cleanResponse, model })}\n\n`));
+              // Send complete — include the D1 UUIDs for both the user and
+              // companion messages so the frontend can replace its optimistic
+              // temp-/comp- IDs with the real ones. Without this, delete/
+              // react/edit actions during the same session hit 404 because
+              // the temp IDs don't exist server-side.
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'complete', content: cleanResponse, model,
+                user_message_id: userMsgId,
+                companion_message_id: compMsgId,
+              })}\n\n`));
               controller.enqueue(encoder.encode('data: [DONE]\n\n'));
             } catch (err) {
               // Rollback the thread + user message we just inserted if this

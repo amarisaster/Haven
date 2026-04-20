@@ -18,6 +18,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
 
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<ExtractedFile | null>(null);
+  const [pendingGif, setPendingGif] = useState<string | null>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -68,21 +69,25 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
 
   const handleSend = () => {
     const trimmed = text.trim();
-    if (!trimmed && !pendingImage && !pendingFile) return;
+    if (!trimmed && !pendingImage && !pendingFile && !pendingGif) return;
     if (disabled) return;
 
     const fileContext = pendingFile
       ? `<file name="${pendingFile.filename}"${pendingFile.pageCount ? ` pages="${pendingFile.pageCount}"` : ''}>\n${pendingFile.text}\n</file>`
       : undefined;
 
-    // The image still rides the separate `image` param (data URL for vision);
-    // the file block rides `fileContext` and is folded into persisted content
-    // downstream. No "(file: name)" placeholder — MessageBubble renders a
-    // real file card.
-    onSend(trimmed, pendingImage || undefined, fileContext);
+    // Text + GIF URL combined into a single message content so Haven's
+    // media parser can render both on the same bubble — text line(s),
+    // then the GIF inline. Newline separator keeps parsing clean.
+    const combined = pendingGif
+      ? (trimmed ? `${trimmed}\n${pendingGif}` : pendingGif)
+      : trimmed;
+
+    onSend(combined, pendingImage || undefined, fileContext);
     setText('');
     setPendingImage(null);
     setPendingFile(null);
+    setPendingGif(null);
     setShowGif(false);
     inputRef.current?.focus();
   };
@@ -95,8 +100,13 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
   };
 
   const handleGifSelect = (gifUrl: string) => {
-    onSend(gifUrl);
+    // Stage the GIF as a pending attachment instead of auto-sending. Lets
+    // the user pick GIF first, then type text around it (the most natural
+    // flow — "here's a GIF + why"). Send happens via the send button or
+    // Enter key like any other message.
+    setPendingGif(gifUrl);
     setShowGif(false);
+    inputRef.current?.focus();
   };
 
   // Speech-to-text
@@ -190,6 +200,18 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
             </div>
           </div>
           <button onClick={() => setPendingFile(null)} style={{
+            width: '18px', height: '18px', borderRadius: '50%', background: '#ef4444', color: 'white',
+            border: 'none', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>x</button>
+        </div>
+      )}
+
+      {pendingGif && (
+        <div style={{ marginBottom: '8px', display: 'inline-flex', alignItems: 'center', gap: '8px',
+          background: 'var(--haven-card)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '6px 8px' }}>
+          <img src={pendingGif} alt="GIF preview" style={{ width: '64px', height: '64px', borderRadius: '6px', objectFit: 'cover' }} />
+          <span style={{ fontSize: '11px', color: 'var(--haven-text-muted)' }}>GIF ready — type a caption (optional) and send</span>
+          <button onClick={() => setPendingGif(null)} style={{
             width: '18px', height: '18px', borderRadius: '50%', background: '#ef4444', color: 'white',
             border: 'none', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}>x</button>
