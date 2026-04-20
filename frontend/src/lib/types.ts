@@ -20,6 +20,7 @@ export interface Message {
   model?: string;
   reactions?: string[];
   tool_calls?: ToolCallRecord[];
+  notice?: string; // soft banner — e.g. "tools unavailable for this response"
   created_at: string;
 }
 
@@ -66,4 +67,5 @@ export interface ModelInfo {
   tier: string;
   description?: string;
   context_length?: number;
+  supports_tools?: boolean; // undefined = unknown; true/false = confirmed
 }

@@ -109,6 +109,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let fullContent = '';
     let responseModel = '';
     let toolCalls: ToolCallRecord[] = [];
+    let notice: string | undefined;
 
     try {
       for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image)) {
@@ -151,8 +152,24 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             });
             break;
           }
+          case 'notice':
+            // Worker emits this when tool inference falls back to plain
+            // streaming — e.g., model doesn't support function calling,
+            // privacy filter blocks tool providers, provider timeout.
+            if (typeof (event as any).message === 'string') {
+              notice = (event as any).message;
+            }
+            break;
           case 'complete':
             responseModel = event.model || selectedModel;
+            // Worker strips [react: emoji] / <think> blocks and sends the
+            // CLEAN text here. Prefer it over the chunk-accumulated content
+            // so the prefix doesn't stay visible in the bubble after
+            // streaming ends.
+            if (typeof event.content === 'string' && event.content.length > 0) {
+              fullContent = event.content;
+              setStreamingContent(fullContent);
+            }
             break;
           case 'error':
             setError(event.message || 'Stream error');
@@ -173,6 +190,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         content: fullContent,
         model: responseModel || selectedModel,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        notice,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, companionMsg]);
@@ -210,6 +228,14 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             break;
           case 'complete':
             responseModel = event.model || selectedModel;
+            // Worker strips [react: emoji] / <think> blocks and sends the
+            // CLEAN text here. Prefer it over the chunk-accumulated content
+            // so the prefix doesn't stay visible in the bubble after
+            // streaming ends.
+            if (typeof event.content === 'string' && event.content.length > 0) {
+              fullContent = event.content;
+              setStreamingContent(fullContent);
+            }
             break;
           case 'error':
             setError(event.message || 'Stream error');

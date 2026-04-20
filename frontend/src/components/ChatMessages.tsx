@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Message } from '../lib/types';
 import MessageBubble from './MessageBubble';
 
@@ -65,11 +65,37 @@ export default function ChatMessages({
 }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [showJumpButton, setShowJumpButton] = useState(false);
 
-  // Auto-scroll on new messages or streaming
+  // Auto-scroll on new messages or streaming — BUT only if the user is
+  // already near the bottom. If they've scrolled up to read older context,
+  // respect that and show the jump-to-bottom button instead of yanking the
+  // view away from them.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = containerRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+    if (nearBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, streamingContent]);
+
+  // Track scroll position so the jump button only appears when useful.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowJumpButton(distanceFromBottom > 300);
+    };
+    el.addEventListener('scroll', onScroll);
+    onScroll();
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const wallpaperStyles = getWallpaperStyle(wallpaper);
 
@@ -163,6 +189,30 @@ export default function ChatMessages({
       )}
 
       <div ref={bottomRef} />
+
+      {/* Jump-to-bottom button — only appears when the user has scrolled up
+          more than ~300px from the latest message. Stays out of the way
+          when you're following the live conversation. */}
+      {showJumpButton && (
+        <button
+          onClick={scrollToBottom}
+          aria-label="Jump to latest"
+          title="Jump to latest"
+          style={{
+            position: 'sticky', bottom: '16px', marginLeft: 'auto',
+            right: '16px', float: 'right',
+            width: '40px', height: '40px', borderRadius: '50%',
+            background: 'var(--haven-accent)', border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'white', boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+            zIndex: 20, marginRight: '16px',
+          }}
+        >
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

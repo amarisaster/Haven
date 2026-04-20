@@ -428,24 +428,72 @@ const NATIVE_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'send_gif',
+      description: "Send an animated GIF to the user. Searches Giphy for a short query and returns a URL. You MUST include that URL verbatim on its own line in your chat reply so Haven renders it inline — don't just say 'I sent a GIF'.",
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: "Short evocative search query — 'hug', 'laughing', 'surprised pikachu', 'eye roll', etc. Keep it under ~5 words.",
+          },
+          rating: {
+            type: 'string',
+            enum: ['g', 'pg', 'pg-13', 'r'],
+            description: "Content rating filter. Defaults to 'pg-13'.",
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 const NATIVE_TOOL_NAMES = new Set(NATIVE_TOOLS.map(t => t.function.name));
 
 async function executeNativeTool(
-  name: string, args: Record<string, unknown>, db: D1Database,
+  name: string, args: Record<string, unknown>, db: D1Database, companionId: number,
 ): Promise<string> {
   if (name === 'update_my_status') {
     const status = typeof args.custom_status === 'string' ? args.custom_status.slice(0, 80) : null;
     const presence = typeof args.presence === 'string' ? args.presence : null;
     if (status !== null) {
-      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_status', status).run();
+      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_status:${companionId}`, status).run();
     }
     if (presence) {
-      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_presence', presence).run();
+      await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_presence:${companionId}`, presence).run();
     }
     return `Status updated. custom_status="${status ?? '(unchanged)'}", presence="${presence ?? '(unchanged)'}"`;
   }
+
+  if (name === 'send_gif') {
+    const query = typeof args.query === 'string' ? args.query.trim() : '';
+    if (!query) return 'send_gif error: query required';
+    const rating = typeof args.rating === 'string' && ['g', 'pg', 'pg-13', 'r'].includes(args.rating)
+      ? args.rating
+      : 'pg-13';
+    // Uses Giphy's public beta key — rate-limited but free and already
+    // embedded in the frontend GifPicker. Same key across Haven so behavior
+    // is consistent between user-picked GIFs and companion-sent ones.
+    const giphyKey = (await getSettingValue(db, 'giphy_key')) || 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+    const url = `https://api.giphy.com/v1/gifs/search?api_key=${giphyKey}&q=${encodeURIComponent(query)}&limit=1&rating=${rating}`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) return `send_gif error: giphy ${resp.status}`;
+      const data = await resp.json() as any;
+      const gif = data?.data?.[0];
+      if (!gif) return `send_gif error: no results for "${query}"`;
+      const gifUrl = gif.images?.fixed_height?.url || gif.images?.original?.url || gif.url;
+      if (!gifUrl) return 'send_gif error: no URL in Giphy response';
+      return `GIF ready. Paste this URL on its own line in your reply for Haven to render it inline: ${gifUrl}`;
+    } catch (e) {
+      return `send_gif error: ${e}`;
+    }
+  }
+
   return `Unknown native tool: ${name}`;
 }
 
@@ -476,6 +524,16 @@ async function loadMcpTools(db: D1Database): Promise<McpTool[]> {
     }
   }
 
+  // Cap the tool count fed to the model. A Nexus-size gateway (137 tools)
+  // burns ~6k tokens of tool schemas per request, which pushes slower
+  // providers (Ollama Cloud 31B + tools) past Cloudflare Workers' wall-clock
+  // ceiling. The cap is a safety valve — users can raise it in settings if
+  // their model handles big tool lists fine.
+  const limitRow = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('mcp_tool_limit').first<{ value: string }>();
+  const limit = Math.max(1, Math.min(200, Number(limitRow?.value) || 30));
+  if (allTools.length > limit) {
+    return allTools.slice(0, limit);
+  }
   return allTools;
 }
 
@@ -489,6 +547,7 @@ async function inferenceWithTools(
   provider: string,
   env: Env,
   tools: McpTool[],
+  companionId: number,
 ): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
@@ -529,7 +588,11 @@ async function inferenceWithTools(
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const resp = await fetch(url, {
       method: 'POST', headers,
-      body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: 0.8 }),
+      // stream:false is explicit because Ollama's native /api/chat defaults
+      // to true, which returns NDJSON and crashes the downstream .json()
+      // call with "Unexpected non-whitespace character after JSON". OpenAI-
+      // compat endpoints default false and ignore the field.
+      body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: 0.8, stream: false }),
     });
 
     if (!resp.ok) {
@@ -559,7 +622,7 @@ async function inferenceWithTools(
         const args = JSON.parse(fn.arguments || '{}');
         if (NATIVE_TOOL_NAMES.has(fn.name)) {
           // Haven-native — run locally against D1 instead of hitting MCP.
-          result = await executeNativeTool(fn.name, args, env.DB);
+          result = await executeNativeTool(fn.name, args, env.DB, companionId);
           ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
           server = 'haven';
         } else {
@@ -997,7 +1060,7 @@ export default {
               if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
                 // Non-streaming path with function calling
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools);
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId);
                   fullResponse = toolResult.content;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
@@ -1009,7 +1072,21 @@ export default {
                   // malformed" from us. Worker tail shows this; the user's
                   // chat keeps flowing via the non-tool path so they still
                   // get a reply.
-                  console.log(`[CHAT] inferenceWithTools failed, falling back to plain stream: ${e}`);
+                  const errStr = String(e);
+                  console.log(`[CHAT] inferenceWithTools failed, falling back to plain stream: ${errStr}`);
+                  // Classify the failure so the UI can surface an actionable
+                  // hint instead of a silent degradation. Three common modes:
+                  let notice = 'Tools unavailable for this response. ';
+                  if (/No endpoints.*tool use/i.test(errStr) || /does not support tool/i.test(errStr)) {
+                    notice += 'The selected model does not support function calling — switch to Claude / GPT-4+ / Llama 3.3+ / Mistral Large, or a non-Gemma Ollama model.';
+                  } else if (/guardrail|data policy|privacy/i.test(errStr)) {
+                    notice += 'Your OpenRouter privacy settings are blocking every tool-capable provider for this model. Adjust at openrouter.ai/settings/privacy.';
+                  } else if (/timeout|ETIMEDOUT|504|523/i.test(errStr)) {
+                    notice += 'The provider timed out. If you have many MCP tools connected, try lowering the mcp_tool_limit setting.';
+                  } else {
+                    notice += `Provider error: ${errStr.slice(0, 200)}`;
+                  }
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
                   for await (const token of streamInference(chatMessages, model, provider, env)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
@@ -1023,14 +1100,28 @@ export default {
                 }
               }
 
-              // Check for reaction marker at the start of the response
-              let cleanResponse = fullResponse;
-              const reactMatch = fullResponse.match(/^\[react:\s*(.+?)\]\s*/);
+              // Check for reaction marker. Strip any leading thinking-model
+              // `<think>...</think>` block first (qwen, deepseek-r1, etc.
+              // wrap their chain-of-thought this way) so the react marker
+              // still matches when it follows the thought. Also tolerate
+              // leading whitespace. Accept the marker anywhere in the first
+              // ~150 chars so a brief preamble doesn't defeat it either.
+              let cleanResponse = fullResponse.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, '');
+              const reactMatch = cleanResponse.match(/^\s*\[react:\s*(.+?)\]\s*/i);
               if (reactMatch) {
                 const emoji = reactMatch[1].trim();
-                cleanResponse = fullResponse.slice(reactMatch[0].length);
-                // Send reaction event for the user's last message
+                cleanResponse = cleanResponse.slice(reactMatch[0].length);
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji })}\n\n`));
+              } else {
+                // Scan the first 200 chars for a `[react: X]` pattern —
+                // sometimes the model writes a short opening clause before
+                // emitting the marker. If we find it, pull it out inline.
+                const loose = cleanResponse.slice(0, 200).match(/\[react:\s*(.+?)\]/i);
+                if (loose) {
+                  const emoji = loose[1].trim();
+                  cleanResponse = cleanResponse.replace(loose[0], '').trimStart();
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji })}\n\n`));
+                }
               }
 
               // Save companion message (without the reaction marker)
@@ -1412,6 +1503,8 @@ export default {
         'ollama_url', 'ollama_key',
         'companion_status', 'companion_presence',
         'user_status', 'user_presence',
+        'mcp_tool_limit',
+        'giphy_key',
       ]);
 
       if (path === '/api/settings' && request.method === 'GET') {
@@ -1439,23 +1532,39 @@ export default {
         return json({ success: true });
       }
 
-      // ---- Status ----
+      // ---- Status ---- (scoped per companion since v1.7.2 — one status per
+      // companion instead of a global key that multi-companion setups would
+      // stomp on each other's writes. Falls back to the old global key for
+      // backward compatibility with pre-v1.7.2 D1s so existing deployments
+      // don't see their one status disappear on upgrade.)
       if (path === '/api/status' && request.method === 'GET') {
-        const statusRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('companion_status').first<{ value: string }>();
-        const presenceRow = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('companion_presence').first<{ value: string }>();
+        const sid = getCompanionId(request);
+        const scopedStatus = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(`companion_status:${sid}`).first<{ value: string }>();
+        const scopedPresence = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(`companion_presence:${sid}`).first<{ value: string }>();
+        let statusValue = scopedStatus?.value ?? null;
+        let presenceValue = scopedPresence?.value ?? null;
+        if (statusValue === null) {
+          const legacy = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('companion_status').first<{ value: string }>();
+          statusValue = legacy?.value ?? null;
+        }
+        if (presenceValue === null) {
+          const legacy = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('companion_presence').first<{ value: string }>();
+          presenceValue = legacy?.value ?? null;
+        }
         return json({
-          custom_status: statusRow?.value || null,
-          presence: presenceRow?.value || 'online',
+          custom_status: statusValue,
+          presence: presenceValue || 'online',
         });
       }
 
       if (path === '/api/status' && request.method === 'PUT') {
+        const sid = getCompanionId(request);
         const body = await request.json() as { custom_status?: string; presence?: string };
         if (body.custom_status !== undefined) {
-          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_status', body.custom_status).run();
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_status:${sid}`, body.custom_status).run();
         }
         if (body.presence) {
-          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('companion_presence', body.presence).run();
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_presence:${sid}`, body.presence).run();
         }
         return json({ success: true });
       }
@@ -1483,7 +1592,7 @@ export default {
 
       // ---- Models ----
       if (path === '/api/models' && request.method === 'GET') {
-        const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number }> = [];
+        const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number; supports_tools?: boolean }> = [];
         const hasOpenRouter = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
 
         // Fetch live models from OpenRouter
@@ -1495,6 +1604,13 @@ export default {
             // Free models always listed. Paid models listed only when the user
             // has their own OpenRouter key configured (so charges go to them).
             if (isFree || hasOpenRouter) {
+              // OpenRouter publishes supported_parameters per model — if
+              // 'tools' isn't in there, tool calling will 404 for every
+              // provider route. We surface this to the picker so users
+              // don't pick Gemma-on-OR expecting tool use.
+              const supportsTools = Array.isArray(m.supported_parameters)
+                ? m.supported_parameters.includes('tools')
+                : undefined;
               models.push({
                 id: m.id,
                 name: m.name || m.id,
@@ -1502,6 +1618,7 @@ export default {
                 tier: isFree ? 'free' : 'paid',
                 description: m.description || undefined,
                 context_length: m.context_length || undefined,
+                supports_tools: supportsTools,
               });
             }
           }
@@ -1533,6 +1650,12 @@ export default {
               } catch {}
             }
             for (const id of ollamaModels) {
+              // Ollama Cloud doesn't publish per-model tool-call support via
+              // the models endpoint. Rather than guess (we were wrongly
+              // flagging Gemma as non-tool-capable based on one timeout),
+              // leave supports_tools undefined so the picker shows no badge
+              // and users can discover empirically. The upstream-error
+              // notice handles degraded fallbacks cleanly.
               models.push({ id, name: id, provider: 'ollama', tier: 'included' });
             }
           } catch {}

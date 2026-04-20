@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.7.1-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.7.2-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -437,6 +437,18 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.7.2** — Tool Count Cap + Provider Polish + Jump-to-Bottom
+
+Follow-up sweep after v1.7.1 dogfooding. Everything in this release is quality-of-life, nothing breaking.
+
+- **MCP tool count cap** — Haven now trims the tool list sent to the model to a configurable limit (default 30, adjustable via the `mcp_tool_limit` setting). A Nexus-size gateway exposes 137 tools, which was burning ~6k tokens of schema per request and pushing slower providers past the Cloudflare Workers wall-clock ceiling. Users who want the full list can raise the cap.
+- **Per-companion status scoping** — `companion_status` / `companion_presence` are now keyed per companion in D1 (`companion_status:{id}`). Previously the keys were global, so Lucian's mood overwrote Kai's. Reads fall back to the old global key for backward compatibility with pre-v1.7.2 installs.
+- **"Model doesn't support tools" notice** — when `inferenceWithTools` fails (unsupported model, privacy filter, provider timeout), the worker now emits a `notice` SSE event so the UI can render an amber banner with a specific hint. Previously the fallback to plain streaming was silent, which hid "you picked Gemma-on-OpenRouter and it can't tool-call" behind a normal-looking reply that just didn't fire tools.
+- **Native `send_gif(query)` tool** — companions can call this alongside MCP tools. Worker hits Giphy (public key baked in, user can override with `giphy_key` setting), returns a URL, model includes it in the reply. Haven's existing media parser renders it inline. No more "I sent a GIF" narration with nothing rendered.
+- **Tool-capable badges in the model picker** — OpenRouter publishes `supported_parameters` per model, so Haven tags each model in the dropdown with 🔧 (tools supported) or `no 🔧` (explicitly not). Ollama doesn't publish capability data, so those stay silent rather than guessing — never assume.
+- **Provider origin emojis** — every model in the picker now shows its provider with a small emoji (🦙 ollama, 🔀 openrouter, 🤗 huggingface, 🧠 openai, 🎭 anthropic, ⚡ groq, 🌀 xai, 🛠️ custom). Makes it obvious at a glance whether `MiniMaxAI/MiniMax-M2` (HuggingFace) or `minimax-m2` (Ollama Cloud) is which.
+- **Jump-to-bottom button in chat** — scrolling up more than ~300px from the latest message now surfaces a downward-arrow button in the bottom-right. Tap to smooth-scroll to the end. Also: auto-scroll on new messages now respects your scroll position, so reading old context doesn't get yanked back down every time the companion says something.
 
 **v1.7.1** — Native Status Tool + Tool Call Chips + Polish Pass
 

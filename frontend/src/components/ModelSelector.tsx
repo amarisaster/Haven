@@ -11,6 +11,20 @@ interface ModelSelectorProps {
 const LS_FAVS = 'haven-fav-models';
 const LS_FILTER = 'haven-model-filter';
 
+// Provider origin emojis — quick visual tag for "where did this model come
+// from" so users don't confuse e.g. `MiniMaxAI/MiniMax-M2` (HuggingFace) with
+// `minimax-m2` (Ollama Cloud). Mirrors Nexus's picker conventions.
+const PROVIDER_EMOJI: Record<string, string> = {
+  ollama: '🦙',
+  openrouter: '🔀',
+  huggingface: '🤗',
+  openai: '🧠',
+  anthropic: '🎭',
+  groq: '⚡',
+  xai: '🌀',
+  custom: '🛠️',
+};
+
 function getFavorites(): Set<string> {
   try {
     return new Set(JSON.parse(localStorage.getItem(LS_FAVS) || '[]'));
@@ -133,7 +147,35 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
               transition: 'color 0.15s',
             }}
           >{isFav ? '\u2605' : '\u2606'}</span>
+          <span
+            title={m.provider}
+            style={{ fontSize: '12px', flexShrink: 0, lineHeight: 1 }}
+          >{PROVIDER_EMOJI[m.provider] || '❓'}</span>
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{m.name}</span>
+          {/* Tool-capable badge — only shown when the backend confirmed
+              support. Unknown (undefined) stays silent to avoid false
+              warnings on custom providers. */}
+          {m.supports_tools === true && (
+            <span
+              title="Supports function calling / MCP tools"
+              style={{
+                fontSize: '10px', padding: '1px 5px', borderRadius: '4px',
+                background: 'var(--haven-card)', color: 'var(--haven-accent)',
+                border: '1px solid var(--haven-border)', flexShrink: 0,
+              }}
+            >🔧</span>
+          )}
+          {m.supports_tools === false && (
+            <span
+              title="Does NOT support function calling — tools won't fire"
+              style={{
+                fontSize: '10px', padding: '1px 5px', borderRadius: '4px',
+                background: 'transparent', color: 'var(--haven-text-muted)',
+                border: '1px dashed var(--haven-border)', flexShrink: 0,
+                opacity: 0.6,
+              }}
+            >no 🔧</span>
+          )}
           {tierBadge(m.tier)}
         </button>
         {hoveredModel?.id === m.id && hoveredModel?.provider === m.provider && (
@@ -232,7 +274,11 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
               <div style={{
                 padding: '8px 12px 4px', fontSize: '10px', fontWeight: 600,
                 color: 'var(--haven-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em',
-              }}>{provider}</div>
+                display: 'flex', alignItems: 'center', gap: '6px',
+              }}>
+                <span style={{ fontSize: '12px', textTransform: 'none' }}>{PROVIDER_EMOJI[provider] || '❓'}</span>
+                <span>{provider}</span>
+              </div>
               {providerModels.map(renderModel)}
             </div>
           ))}

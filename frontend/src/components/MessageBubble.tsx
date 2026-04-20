@@ -388,6 +388,27 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
           )}
         </div>
 
+        {/* Fallback notice — worker emits this when the tool-call path
+            failed (unsupported model, privacy filter, timeout) and we
+            degraded to plain streaming. Small amber banner so the user
+            knows why tool chips are missing on this reply. */}
+        {isCompanion && message.notice && (
+          <div
+            style={{
+              marginTop: '4px',
+              padding: '6px 10px',
+              borderRadius: '8px',
+              background: '#7c521020',
+              border: '1px solid #d97706',
+              color: '#fbbf24',
+              fontSize: '11px',
+              lineHeight: '1.4',
+            }}
+          >
+            ⚠ {message.notice}
+          </div>
+        )}
+
         {/* Tool call chips — small pills showing which MCP tools fired during
             this response. Failed calls get a muted / strikethrough look so
             "tried and errored" is visible without the whole row feeling busy. */}

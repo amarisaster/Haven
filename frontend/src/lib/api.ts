@@ -201,7 +201,7 @@ export async function* sendChat(
   model: string,
   provider: string,
   image?: string,
-): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string; results?: unknown[]; emoji?: string }> {
+): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string; results?: unknown[]; emoji?: string; notice?: string }> {
   const res = await fetch(`${apiBase()}/api/chat`, {
     method: 'POST',
     headers: scopedHeaders({ 'Content-Type': 'application/json' }),
