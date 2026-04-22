@@ -544,12 +544,19 @@ async function inferenceWithTools(
   const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS];
   const toolLookup = new Map(tools.map(t => [t.name, t]));
 
-  // Build headers/URL same as streamInference
+  // Build headers/URL same as streamInference. Per-provider toggles gate the
+  // key — if disabled, treat as if no key is set so the routing cascades
+  // through the else-branch (i.e., toggling off ollama falls back to OR etc).
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const openrouterKey = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
-  const ollamaKey = await getSettingValue(env.DB, 'ollama_key');
-  const customKey = await getSettingValue(env.DB, 'custom_key');
-  const customBaseUrl = await getSettingValue(env.DB, 'custom_base_url');
+  const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
+    isProviderEnabled(env.DB, 'openrouter'),
+    isProviderEnabled(env.DB, 'ollama'),
+    isProviderEnabled(env.DB, 'custom'),
+  ]);
+  const openrouterKey = orEnabled ? (env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key')) : null;
+  const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
+  const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
+  const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
   const detectedProvider = await getSettingValue(env.DB, 'provider');
   const baseOllamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
 
@@ -776,6 +783,13 @@ async function getSettingValue(db: D1Database, key: string): Promise<string | nu
   return row?.value || null;
 }
 
+// Returns whether a provider's toggle is on. Missing/empty = enabled
+// (default on, back-compat). Only the literal string "false" disables.
+async function isProviderEnabled(db: D1Database, provider: 'openrouter' | 'ollama' | 'custom'): Promise<boolean> {
+  const val = await getSettingValue(db, `${provider}_enabled`);
+  return val !== 'false';
+}
+
 async function* streamInference(
   messages: Array<{ role: string; content: any }>,
   model: string,
@@ -787,12 +801,19 @@ async function* streamInference(
     'Content-Type': 'application/json',
   };
 
-  // Read API keys from env (wrangler secrets) OR D1 settings
-  const openrouterKey = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
+  // Read API keys from env (wrangler secrets) OR D1 settings. Per-provider
+  // toggles null the key when a provider is disabled so the routing cascades
+  // as if no key were configured.
+  const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
+    isProviderEnabled(env.DB, 'openrouter'),
+    isProviderEnabled(env.DB, 'ollama'),
+    isProviderEnabled(env.DB, 'custom'),
+  ]);
+  const openrouterKey = orEnabled ? (env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key')) : null;
   const ollamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url');
-  const ollamaKey = await getSettingValue(env.DB, 'ollama_key');
-  const customKey = await getSettingValue(env.DB, 'custom_key');
-  const customBaseUrl = await getSettingValue(env.DB, 'custom_base_url');
+  const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
+  const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
+  const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
   const detectedProvider = await getSettingValue(env.DB, 'provider');
 
   let useNativeOllama = false;
@@ -1573,6 +1594,10 @@ export default {
         'user_status', 'user_presence',
         'mcp_tool_limit',
         'giphy_key',
+        // Per-provider on/off toggles. Absent/empty = enabled (back compat).
+        // "false" (string) = disabled. Worker treats disabled providers as
+        // if they had no key when resolving chat requests or listing models.
+        'openrouter_enabled', 'ollama_enabled', 'custom_enabled',
       ]);
 
       if (path === '/api/settings' && request.method === 'GET') {
@@ -1661,10 +1686,17 @@ export default {
       // ---- Models ----
       if (path === '/api/models' && request.method === 'GET') {
         const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number; supports_tools?: boolean }> = [];
-        const hasOpenRouter = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
+        // Per-provider toggles suppress that provider's models from the
+        // picker entirely when disabled.
+        const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
+          isProviderEnabled(env.DB, 'openrouter'),
+          isProviderEnabled(env.DB, 'ollama'),
+          isProviderEnabled(env.DB, 'custom'),
+        ]);
+        const hasOpenRouter = orEnabled ? (env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key')) : null;
 
-        // Fetch live models from OpenRouter
-        try {
+        // Fetch live models from OpenRouter (skip entirely if disabled)
+        if (orEnabled) try {
           const res = await fetch('https://openrouter.ai/api/v1/models');
           const data = await res.json() as any;
           for (const m of (data.data || [])) {
@@ -1698,10 +1730,10 @@ export default {
           );
         }
 
-        // Add Ollama models if configured
+        // Add Ollama models if configured AND enabled
         const ollamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
-        const ollamaKey = await getSettingValue(env.DB, 'ollama_key');
-        if (ollamaKey || (ollamaUrl && ollamaUrl.startsWith('http'))) {
+        const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
+        if (ollamaEnabled && (ollamaKey || (ollamaUrl && ollamaUrl.startsWith('http')))) {
           try {
             const ollamaHeaders: Record<string, string> = {};
             if (ollamaKey) ollamaHeaders['Authorization'] = `Bearer ${ollamaKey}`;
@@ -1730,9 +1762,9 @@ export default {
         }
 
         // Add custom provider models (HuggingFace, Groq, OpenAI, etc.)
-        const customKey = await getSettingValue(env.DB, 'custom_key');
-        const customBaseUrl = await getSettingValue(env.DB, 'custom_base_url');
-        if (customKey && customBaseUrl) {
+        const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
+        const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
+        if (customEnabled && customKey && customBaseUrl) {
           // Detect provider from URL, not the shared provider field
           let customProvider = 'custom';
           if (customBaseUrl.includes('huggingface') || customBaseUrl.includes('hf.co')) customProvider = 'huggingface';

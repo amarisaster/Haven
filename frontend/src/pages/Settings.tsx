@@ -31,6 +31,12 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [apiSaving, setApiSaving] = useState(false);
   const [apiMsg, setApiMsg] = useState('');
   const [connectedProviders, setConnectedProviders] = useState<string[]>([]);
+  // Per-provider enabled toggles. Each entry is the ENABLED setting key on
+  // the worker side (openrouter_enabled, ollama_enabled, custom_enabled).
+  // "false" string = disabled; anything else = enabled (default).
+  const [providerEnabled, setProviderEnabled] = useState<Record<string, boolean>>({
+    openrouter: true, ollama: true, custom: true,
+  });
 
   // Chat
   const [fontSize, setFontSize] = useState(() => {
@@ -110,6 +116,12 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         else if (s.provider) connected.push(s.provider);
       }
       setConnectedProviders(connected);
+      // Hydrate per-provider toggles from settings. Missing = enabled.
+      setProviderEnabled({
+        openrouter: (s as any).openrouter_enabled !== 'false',
+        ollama: (s as any).ollama_enabled !== 'false',
+        custom: (s as any).custom_enabled !== 'false',
+      });
     }).catch((e) => console.warn('[settings] getSettings failed', e));
 
     loadIdentities();
@@ -516,16 +528,45 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>Connect</h3>
         {connectedProviders.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-            {connectedProviders.map(p => (
-              <span key={p} style={{
-                display: 'inline-flex', alignItems: 'center', gap: '5px',
-                fontSize: '11px', color: '#4ade80',
-                background: '#16a34a15', borderRadius: '6px', padding: '3px 8px',
-              }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ade80', flexShrink: 0 }} />
-                {p}
-              </span>
-            ))}
+            {connectedProviders.map(p => {
+              // Map display name → toggle key. OpenRouter + Ollama are their
+              // own providers; everything custom (HF, Groq, OpenAI, etc.)
+              // shares the `custom_enabled` flag since it's one stored key.
+              const toggleKey =
+                p === 'OpenRouter' ? 'openrouter' :
+                p === 'Ollama' ? 'ollama' : 'custom';
+              const enabled = providerEnabled[toggleKey];
+              const dot = enabled ? '#4ade80' : 'var(--haven-text-muted)';
+              const bg = enabled ? '#16a34a15' : 'var(--haven-card)';
+              const textColor = enabled ? '#4ade80' : 'var(--haven-text-muted)';
+              const toggle = async () => {
+                const next = !enabled;
+                setProviderEnabled(prev => ({ ...prev, [toggleKey]: next }));
+                try {
+                  await updateSettings({ [`${toggleKey}_enabled`]: next ? 'true' : 'false' });
+                } catch {
+                  setProviderEnabled(prev => ({ ...prev, [toggleKey]: !next }));
+                }
+              };
+              return (
+                <button
+                  key={p}
+                  onClick={toggle}
+                  title={enabled ? `Click to disable ${p}` : `Click to enable ${p}`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '5px',
+                    fontSize: '11px', color: textColor,
+                    background: bg, borderRadius: '6px', padding: '3px 8px',
+                    border: 'none', cursor: 'pointer',
+                    opacity: enabled ? 1 : 0.6,
+                    textDecoration: enabled ? 'none' : 'line-through',
+                  }}
+                >
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: dot, flexShrink: 0 }} />
+                  {p}
+                </button>
+              );
+            })}
           </div>
         )}
         <div style={{ marginBottom: '12px' }}>

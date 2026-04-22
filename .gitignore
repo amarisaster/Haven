@@ -1,4 +1,5 @@
 .wrangler/
+wrangler.jsonc
 node_modules/
 .env
 *.log
