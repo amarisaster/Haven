@@ -241,8 +241,10 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
           style={{
             position: 'absolute', top: '100%', right: 0, marginTop: '4px',
             background: 'var(--haven-surface)', border: '1px solid var(--haven-border)',
-            borderRadius: '10px', width: '260px', maxHeight: '350px', overflowY: 'auto',
+            borderRadius: '10px', width: '260px', maxHeight: '350px', overflowY: 'scroll',
             zIndex: 100, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            WebkitOverflowScrolling: 'touch' as any, touchAction: 'pan-y',
+            overscrollBehavior: 'contain',
           }}
         >
           {/* Filter tabs */}

@@ -278,8 +278,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
   return (
     <div className="hide-scrollbar" style={{
-      height: '100%', overflowY: 'auto', padding: '20px',
+      height: '100%', overflowY: 'scroll', padding: '20px',
       maxWidth: '600px', margin: '0 auto',
+      WebkitOverflowScrolling: 'touch' as any, touchAction: 'pan-y',
     }}>
       {/* Back link */}
       <div style={{ marginBottom: '20px' }}>
