@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.7.2-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.7.3-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -83,8 +83,8 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 <p align="center"><em>Per-companion project files — PDFs, DOCX, EPUB, markdown, code. Extracted text gets baked into that companion's system prompt.</em></p>
 
 ### Talk
-- Chat with your companion using any model — **Ollama Cloud, OpenRouter, OpenAI, Anthropic, Groq, xAI**, or local models
-- One API key field that auto-detects your provider. Paste it in, we figure out the rest
+- Chat with your companion using any model — **Ollama Cloud, OpenRouter, OpenAI, Anthropic (native), Groq, xAI**, or local models
+- One API key field that auto-detects your provider. Paste it in, we figure out the rest. Direct Anthropic API keys work natively — no OpenRouter proxy needed
 - Switch models mid-conversation if you want to try something different
 - Streaming responses — watch them think in real time
 
@@ -100,7 +100,7 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 ### Feel real
 - **Multi-provider TTS** — ElevenLabs, Hume, Groq, Kokoro (local), browser voices, or Cloud TTS via Workers AI. Pick what sounds right.
 - **Speech-to-text** — talk to them with your voice. Uses your browser's native Web Speech Recognition API, so there's no API key to configure. Tap the mic, grant permission once, start talking; tap again to stop. Works in **Chrome, Edge, Safari, and most Chromium-based browsers** (including the Android PWA + WebView, where it hands off to Google's on-device recognizer). **Firefox does not support it** — in Firefox the mic button will tell you so rather than silently fail. Quality is "good enough to capture a sentence" — accents and fast speech can fumble — but since it's free and built in, it's there when you want it.
-- **Message reactions** — because sometimes a heart says more than words
+- **Message reactions** — frequent-use emoji bar that learns what you use most, plus a "+" button for any emoji
 - **GIF search** — built-in GIPHY picker. GIFs render inline as animated images, not URLs
 - **Custom stickers** — upload your own stickers, stored locally in IndexedDB
 - **Chat wallpapers** — per-thread wallpapers with translucent companion bubbles
@@ -437,6 +437,19 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.7.3** — Anthropic API + UX Fixes
+
+Bug fix + quality-of-life release from community testing.
+
+- **Native Anthropic API support** — direct Claude API keys now work end-to-end. Model listing fetches from Anthropic's `/models` endpoint (falls back to Claude Sonnet 4 + Haiku 4.5), streaming uses `content_block_delta` SSE events, tool calling uses `tool_use`/`tool_result` blocks. No OpenRouter proxy needed.
+- **Anthropic routing fix** — chat requests were checking a DB setting instead of the request's provider field, causing 401s when selecting Anthropic models. Fixed in both `inferenceWithTools` and `streamInference`.
+- **Tool-call limit fallback for Anthropic** — when a model hit the 5-iteration tool loop cap, the "force text" fallback was sending OpenAI-format requests regardless of provider. Now builds proper Anthropic message format for the nudge.
+- **Enter = new line, Shift+Enter = send** — flipped from the previous behavior. Multiline messages are easier to compose.
+- **Italic text visible on user messages** — italic markup (`*text*`) was rendering with `color: var(--haven-accent-soft)`, which is the same color as the user bubble background. Italics now inherit the parent text color.
+- **Wallpaper upload compression** — uploaded images are now resized to max 1920px and compressed to JPEG 80% before storing as a data URL. Large phone photos (~10MB) were choking the WebView.
+- **Touch scrolling fix** — model picker dropdown and Settings page now use `overflow-y: scroll` with `touch-action: pan-y` and `-webkit-overflow-scrolling: touch` for Android WebView compatibility.
+- **Frequent-use reaction emojis** — reaction bar now tracks which emojis you use most and sorts them to the front. Defaults to ❤️ 🖤 😂 😮 🥺 🔥 for new users. A "+" button opens a text input for any custom emoji — type or use the native emoji keyboard.
 
 **v1.7.2** — Tool Count Cap + Provider Polish + Jump-to-Bottom
 
