@@ -557,7 +557,6 @@ async function inferenceWithTools(
   const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
   const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
   const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
-  const detectedProvider = await getSettingValue(env.DB, 'provider');
   const baseOllamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
 
   let url: string;
@@ -565,12 +564,12 @@ async function inferenceWithTools(
   if (provider === 'ollama') {
     url = `${baseOllamaUrl}/api/chat`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (detectedProvider === 'anthropic' && customBaseUrl && customKey) {
+  } else if (provider === 'anthropic' && customBaseUrl && customKey) {
     isAnthropic = true;
     url = `${customBaseUrl}/messages`;
     headers['x-api-key'] = customKey;
     headers['anthropic-version'] = '2023-06-01';
-  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
+  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(provider)) {
     url = `${customBaseUrl}/chat/completions`;
     headers['Authorization'] = `Bearer ${customKey}`;
   } else {
@@ -689,18 +688,32 @@ async function inferenceWithTools(
   // model has to produce prose. Preserves any tool_results already
   // collected for the UI chips.
   try {
-    const finalResp = await fetch(url, {
-      method: 'POST', headers,
-      body: JSON.stringify({
-        model,
-        messages: [...conversation, { role: 'user', content: 'Please respond to the user now with a direct message. Do not call any more tools.' }],
-        temperature: 0.8,
-        stream: false,
-      }),
-    });
+    const nudge = 'Please respond to the user now with a direct message. Do not call any more tools.';
+    let finalResp: Response;
+    if (isAnthropic) {
+      const { system, messages: anthropicMsgs } = buildAnthropicMessages([...conversation, { role: 'user', content: nudge }]);
+      const body: any = { model, messages: anthropicMsgs, max_tokens: 4096, temperature: 0.8, stream: false };
+      if (system) body.system = system;
+      finalResp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    } else {
+      finalResp = await fetch(url, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          model,
+          messages: [...conversation, { role: 'user', content: nudge }],
+          temperature: 0.8,
+          stream: false,
+        }),
+      });
+    }
     if (finalResp.ok) {
       const finalData = await finalResp.json() as any;
-      const finalContent = finalData?.choices?.[0]?.message?.content || finalData?.message?.content || '';
+      let finalContent = '';
+      if (isAnthropic) {
+        finalContent = (finalData.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+      } else {
+        finalContent = finalData?.choices?.[0]?.message?.content || finalData?.message?.content || '';
+      }
       if (finalContent) {
         return { content: finalContent, toolResults: allToolResults };
       }
@@ -881,7 +894,6 @@ async function* streamInference(
   const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
   const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
   const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
-  const detectedProvider = await getSettingValue(env.DB, 'provider');
 
   let useNativeOllama = false;
   let isAnthropic = false;
@@ -890,12 +902,12 @@ async function* streamInference(
   if (provider === 'ollama') {
     url = `${baseOllamaUrl}/v1/chat/completions`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (detectedProvider === 'anthropic' && customBaseUrl && customKey) {
+  } else if (provider === 'anthropic' && customBaseUrl && customKey) {
     isAnthropic = true;
     url = `${customBaseUrl}/messages`;
     headers['x-api-key'] = customKey;
     headers['anthropic-version'] = '2023-06-01';
-  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
+  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(provider)) {
     url = `${customBaseUrl}/chat/completions`;
     headers['Authorization'] = `Bearer ${customKey}`;
   } else {

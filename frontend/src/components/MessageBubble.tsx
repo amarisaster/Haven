@@ -122,7 +122,7 @@ function renderFormatted(text: string): React.ReactNode[] {
         const candidate = {
           index: italicMatch.index,
           length: italicMatch[0].length,
-          node: <em key={`i-${i}-${key++}`} style={{ color: 'var(--haven-accent-soft)', fontStyle: 'italic' }}>{italicMatch[1]}</em>,
+          node: <em key={`i-${i}-${key++}`} style={{ fontStyle: 'italic', opacity: 0.85 }}>{italicMatch[1]}</em>,
         };
         if (!firstMatch || candidate.index < firstMatch.index) firstMatch = candidate;
       }

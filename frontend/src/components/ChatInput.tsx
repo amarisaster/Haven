@@ -93,7 +93,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
