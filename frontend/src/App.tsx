@@ -193,7 +193,7 @@ export default function App() {
 
       {/* Settings */}
       {view === 'settings' && (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ height: '100%', overflow: 'hidden' }}>
           <Settings onImport={() => setShowImport(true)} onBack={goBack} />
         </div>
       )}
