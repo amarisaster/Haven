@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Message, ToolCallRecord } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
 import ChatMessages from './ChatMessages';
@@ -357,6 +357,9 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         return { ...m, reactions };
       })
     );
+    if (!messageId.startsWith('temp-') && !messageId.startsWith('comp-')) {
+      reactMessage(messageId, emoji).catch(() => {});
+    }
   }, []);
 
   const adjustFont = (delta: number) => {

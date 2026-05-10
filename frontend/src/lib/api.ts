@@ -85,6 +85,14 @@ export const createThread = (title?: string) => post<{ id: string }>('/api/threa
 export const deleteThread = (id: string) => del(`/api/threads/${id}`);
 export const renameThread = (id: string, title: string) => put<{ success: boolean }>(`/api/threads/${id}`, { title });
 export const deleteMessage = (id: string) => del(`/api/messages/${id}`);
+export async function reactMessage(messageId: string, emoji: string): Promise<{ reactions: string[] }> {
+  const res = await fetch(`${apiBase()}/api/messages/${messageId}/react`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Companion-Id': String(activeCompanionId()) },
+    body: JSON.stringify({ emoji }),
+  });
+  return res.json();
+}
 
 // Messages
 export const getMessages = (threadId: string) => get<Message[]>(`/api/messages/${threadId}`);

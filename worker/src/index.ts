@@ -13,7 +13,7 @@ interface Env {
 // CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, X-Companion-Id',
 };
 
@@ -22,6 +22,10 @@ function json(data: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+async function ensureReactionsColumn(db: D1Database) {
+  try { await db.prepare("ALTER TABLE messages ADD COLUMN reactions TEXT").run(); } catch { /* already exists */ }
 }
 
 // Which companion the current request operates on. Frontend sends
@@ -1073,9 +1077,9 @@ async function ensureMigrations(db: D1Database): Promise<void> {
   try {
     await runMigrations(db);
   } catch (e) {
-    // Log and continue — a broken migration shouldn't take the worker down.
     console.log(`[MIGRATE] Error during v1.7 migration: ${e}`);
   }
+  await ensureReactionsColumn(db);
   migrationsRan = true;
 }
 
@@ -1292,21 +1296,28 @@ export default {
               // leading whitespace. Accept the marker anywhere in the first
               // ~150 chars so a brief preamble doesn't defeat it either.
               let cleanResponse = fullResponse.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, '');
+              let reactionEmoji: string | null = null;
               const reactMatch = cleanResponse.match(/^\s*\[react:\s*(.+?)\]\s*/i);
               if (reactMatch) {
-                const emoji = reactMatch[1].trim();
+                reactionEmoji = reactMatch[1].trim();
                 cleanResponse = cleanResponse.slice(reactMatch[0].length);
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji })}\n\n`));
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji: reactionEmoji })}\n\n`));
               } else {
-                // Scan the first 200 chars for a `[react: X]` pattern —
-                // sometimes the model writes a short opening clause before
-                // emitting the marker. If we find it, pull it out inline.
                 const loose = cleanResponse.slice(0, 200).match(/\[react:\s*(.+?)\]/i);
                 if (loose) {
-                  const emoji = loose[1].trim();
+                  reactionEmoji = loose[1].trim();
                   cleanResponse = cleanResponse.replace(loose[0], '').trimStart();
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji })}\n\n`));
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji: reactionEmoji })}\n\n`));
                 }
+              }
+
+              if (reactionEmoji) {
+                try {
+                  const cur = await env.DB.prepare('SELECT reactions FROM messages WHERE id = ?').bind(userMsgId).first<{ reactions: string | null }>();
+                  const existing: string[] = cur?.reactions ? JSON.parse(cur.reactions) : [];
+                  existing.push(reactionEmoji);
+                  await env.DB.prepare('UPDATE messages SET reactions = ? WHERE id = ?').bind(JSON.stringify(existing), userMsgId).run();
+                } catch { /* best-effort */ }
               }
 
               // Save companion message (without the reaction marker)
@@ -1414,7 +1425,31 @@ export default {
         const messages = await env.DB.prepare(
           'SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC'
         ).bind(threadId).all();
-        return json(messages.results || []);
+        const parsed = (messages.results || []).map((m: any) => ({
+          ...m,
+          reactions: m.reactions ? JSON.parse(m.reactions) : undefined,
+        }));
+        return json(parsed);
+      }
+
+      // PATCH /api/messages/:id/react — toggle a reaction emoji on a message
+      if (path.match(/^\/api\/messages\/[^/]+\/react$/) && request.method === 'PATCH') {
+        const cid = getCompanionId(request);
+        const messageId = path.split('/')[3];
+        const { emoji } = await request.json() as { emoji: string };
+        if (!emoji) return json({ error: 'emoji required' }, 400);
+        const row = await env.DB.prepare(
+          'SELECT m.id, m.reactions, t.companion_id FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ?'
+        ).bind(messageId).first<{ id: string; reactions: string | null; companion_id: number }>();
+        if (!row) return json({ error: 'message not found' }, 404);
+        if (row.companion_id !== cid) return json({ error: 'forbidden' }, 403);
+        const reactions: string[] = row.reactions ? JSON.parse(row.reactions) : [];
+        const idx = reactions.indexOf(emoji);
+        if (idx >= 0) reactions.splice(idx, 1);
+        else reactions.push(emoji);
+        await env.DB.prepare('UPDATE messages SET reactions = ? WHERE id = ?')
+          .bind(reactions.length > 0 ? JSON.stringify(reactions) : null, messageId).run();
+        return json({ success: true, reactions });
       }
 
       // DELETE /api/messages/:id — scoped by joining through threads so a
