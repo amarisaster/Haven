@@ -15,7 +15,7 @@ interface MessageBubbleProps {
   onRegenerate?: (messageId: string) => void;
 }
 
-const REACTIONS = ['❤️', '😂', '😮', '🥺', '🔥', '👏'];
+const REACTIONS = ['❤️', '🖤', '😂', '😮', '🥺', '🔥', '👏', '💜', '🥰', '😭'];
 
 type ContentPart =
   | { kind: 'text'; text: string }
