@@ -1295,18 +1295,20 @@ export default {
               // still matches when it follows the thought. Also tolerate
               // leading whitespace. Accept the marker anywhere in the first
               // ~150 chars so a brief preamble doesn't defeat it either.
-              let cleanResponse = fullResponse.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, '');
+              let cleanResponse = fullResponse;
               let reactionEmoji: string | null = null;
-              const reactMatch = cleanResponse.match(/^\s*\[react:\s*(.+?)\]\s*/i);
+              // Find and strip [react: emoji] — scan after any <think> block
+              const afterThink = cleanResponse.replace(/^\s*<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/i, '');
+              const reactMatch = afterThink.match(/^\s*\[react:\s*(.+?)\]\s*/i);
               if (reactMatch) {
                 reactionEmoji = reactMatch[1].trim();
-                cleanResponse = cleanResponse.slice(reactMatch[0].length);
+                cleanResponse = cleanResponse.replace(reactMatch[0], '');
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji: reactionEmoji })}\n\n`));
               } else {
-                const loose = cleanResponse.slice(0, 200).match(/\[react:\s*(.+?)\]/i);
+                const loose = afterThink.slice(0, 200).match(/\[react:\s*(.+?)\]/i);
                 if (loose) {
                   reactionEmoji = loose[1].trim();
-                  cleanResponse = cleanResponse.replace(loose[0], '').trimStart();
+                  cleanResponse = cleanResponse.replace(loose[0], '').replace(/\n{3,}/g, '\n\n').trim();
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'reaction', emoji: reactionEmoji })}\n\n`));
                 }
               }

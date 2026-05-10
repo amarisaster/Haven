@@ -171,6 +171,20 @@ function renderFormatted(text: string): React.ReactNode[] {
   });
 }
 
+function parseThinking(content: string): { thinking: string | null; isThinking: boolean; response: string } {
+  const openMatch = content.match(/^\s*<think(?:ing)?>/i);
+  if (!openMatch) return { thinking: null, isThinking: false, response: content };
+  const closeMatch = content.match(/<\/think(?:ing)?>/i);
+  if (!closeMatch) {
+    return { thinking: content.slice(openMatch[0].length), isThinking: true, response: '' };
+  }
+  const fullMatch = content.match(/^\s*<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>\s*/i);
+  if (fullMatch) {
+    return { thinking: fullMatch[1].trim(), isThinking: false, response: content.slice(fullMatch[0].length) };
+  }
+  return { thinking: null, isThinking: false, response: content };
+}
+
 function formatTimestamp(dateStr: string): string {
   const d = new Date(dateStr);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -260,9 +274,11 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
   const [speaking, setSpeaking] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
 
   const isUser = message.role === 'user';
   const isCompanion = message.role === 'companion';
+  const { thinking, isThinking, response } = isCompanion ? parseThinking(message.content) : { thinking: null, isThinking: false, response: message.content };
 
   const handleTTS = () => {
     if (speaking) {
@@ -291,7 +307,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
     setShowEmojiInput(false);
   };
 
-  const parsedParts = parseContent(message.content);
+  const parsedParts = parseContent(response);
   // If the whole message is a single media URL, render the bubble in "media
   // mode" (tight padding, no bubble chrome) for the classic clean look.
   const mediaOnly = parsedParts.length === 1 && parsedParts[0].kind !== 'text' && parsedParts[0].kind !== 'file';
@@ -359,6 +375,54 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
             </div>
           ) : (
             <>
+              {/* Thinking block — collapsible, Claude.ai style */}
+              {isThinking && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '6px 0', color: 'var(--haven-text-muted)', fontSize: '12px',
+                  cursor: 'pointer',
+                }} onClick={(e) => { e.stopPropagation(); setThinkingExpanded(!thinkingExpanded); }}>
+                  <span style={{
+                    display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
+                    background: 'var(--haven-accent)', animation: 'haven-thinking-pulse 1.5s ease-in-out infinite',
+                  }} />
+                  <span>Thinking...</span>
+                  <style>{`@keyframes haven-thinking-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+                </div>
+              )}
+              {thinking && !isThinking && (
+                <div
+                  style={{ padding: '4px 0', marginBottom: '6px', borderBottom: '1px solid var(--haven-border)' }}
+                  onClick={(e) => { e.stopPropagation(); setThinkingExpanded(!thinkingExpanded); }}
+                >
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    color: 'var(--haven-text-muted)', fontSize: '11px', cursor: 'pointer',
+                    userSelect: 'none',
+                  }}>
+                    <span style={{ fontSize: '8px', transition: 'transform 0.15s', transform: thinkingExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+                    <span>Thought process</span>
+                  </div>
+                  {thinkingExpanded && (
+                    <div style={{
+                      marginTop: '6px', padding: '8px', borderRadius: '6px',
+                      background: 'var(--haven-surface)', fontSize: '11px',
+                      color: 'var(--haven-text-muted)', lineHeight: '1.5',
+                      maxHeight: '200px', overflowY: 'auto',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    }}>{thinking}</div>
+                  )}
+                </div>
+              )}
+              {(isThinking && thinkingExpanded && thinking) && (
+                <div style={{
+                  marginBottom: '6px', padding: '8px', borderRadius: '6px',
+                  background: 'var(--haven-surface)', fontSize: '11px',
+                  color: 'var(--haven-text-muted)', lineHeight: '1.5',
+                  maxHeight: '200px', overflowY: 'auto',
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>{thinking}</div>
+              )}
               {renderContentParts(parsedParts, `m-${message.id}`)}
               {message.image && (
                 <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
