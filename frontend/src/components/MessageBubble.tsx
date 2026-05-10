@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { Message } from '../lib/types';
 import { speak, stop } from '../lib/tts';
 
@@ -15,7 +15,30 @@ interface MessageBubbleProps {
   onRegenerate?: (messageId: string) => void;
 }
 
-const REACTIONS = ['❤️', '🖤', '😂', '😮', '🥺', '🔥', '👏', '💜', '🥰', '😭'];
+const DEFAULT_REACTIONS = ['❤️', '🖤', '😂', '😮', '🥺', '🔥'];
+const LS_FREQ = 'haven-freq-reactions';
+const MAX_QUICK = 8;
+
+function getFrequentReactions(): string[] {
+  try {
+    const data: Record<string, number> = JSON.parse(localStorage.getItem(LS_FREQ) || '{}');
+    const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).map(([e]) => e);
+    if (sorted.length === 0) return DEFAULT_REACTIONS;
+    const merged = [...sorted];
+    for (const d of DEFAULT_REACTIONS) {
+      if (!merged.includes(d)) merged.push(d);
+    }
+    return merged.slice(0, MAX_QUICK);
+  } catch { return DEFAULT_REACTIONS; }
+}
+
+function trackReaction(emoji: string) {
+  try {
+    const data: Record<string, number> = JSON.parse(localStorage.getItem(LS_FREQ) || '{}');
+    data[emoji] = (data[emoji] || 0) + 1;
+    localStorage.setItem(LS_FREQ, JSON.stringify(data));
+  } catch {}
+}
 
 type ContentPart =
   | { kind: 'text'; text: string }
@@ -258,9 +281,14 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
     setEditing(false);
   };
 
+  const [showEmojiInput, setShowEmojiInput] = useState(false);
+  const emojiInputRef = useRef<HTMLInputElement>(null);
+
   const handleReact = (emoji: string) => {
+    trackReaction(emoji);
     onReact?.(message.id, emoji);
     setShowActions(false);
+    setShowEmojiInput(false);
   };
 
   const parsedParts = parseContent(message.content);
@@ -448,7 +476,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {REACTIONS.map((emoji) => (
+            {getFrequentReactions().map((emoji) => (
               <button
                 key={emoji}
                 onClick={() => handleReact(emoji)}
@@ -461,6 +489,36 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                 onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
               >{emoji}</button>
             ))}
+            <button
+              onClick={() => { setShowEmojiInput(true); setTimeout(() => emojiInputRef.current?.focus(), 50); }}
+              style={{
+                fontSize: '14px', background: 'var(--haven-surface)', border: '1px solid var(--haven-border)',
+                borderRadius: '8px', padding: '2px 8px', cursor: 'pointer', color: 'var(--haven-text-muted)',
+              }}
+            >+</button>
+            {showEmojiInput && (
+              <input
+                ref={emojiInputRef}
+                type="text"
+                placeholder="emoji"
+                style={{
+                  width: '50px', fontSize: '16px', background: 'var(--haven-surface)',
+                  border: '1px solid var(--haven-border)', borderRadius: '8px',
+                  padding: '2px 6px', color: 'var(--haven-text)', textAlign: 'center',
+                  outline: 'none',
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const val = (e.target as HTMLInputElement).value.trim();
+                    if (val) handleReact(val);
+                  }
+                }}
+                onInput={(e) => {
+                  const val = (e.target as HTMLInputElement).value.trim();
+                  if (val && /\p{Emoji}/u.test(val)) handleReact(val);
+                }}
+              />
+            )}
             {isUser && onEdit && (
               <button
                 onClick={() => setEditing(true)}
