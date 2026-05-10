@@ -1958,6 +1958,41 @@ export default {
         return json({ success: true });
       }
 
+      // ---- Storage Usage (R2) ----
+      if (path === '/api/storage' && request.method === 'GET') {
+        let chatCount = 0, chatBytes = 0, projectCount = 0, projectBytes = 0;
+        let cursor: string | undefined;
+        do {
+          const list = await env.FILES.list({ cursor, limit: 500 });
+          for (const obj of list.objects) {
+            if (obj.key.startsWith('companion-')) {
+              projectCount++;
+              projectBytes += obj.size;
+            } else {
+              chatCount++;
+              chatBytes += obj.size;
+            }
+          }
+          cursor = list.truncated ? list.cursor : undefined;
+        } while (cursor);
+        return json({ chat: { count: chatCount, bytes: chatBytes }, project: { count: projectCount, bytes: projectBytes } });
+      }
+
+      if (path === '/api/storage/chat-files' && request.method === 'DELETE') {
+        let deleted = 0;
+        let cursor: string | undefined;
+        do {
+          const list = await env.FILES.list({ cursor, limit: 500 });
+          const chatKeys = list.objects.filter(o => !o.key.startsWith('companion-')).map(o => o.key);
+          if (chatKeys.length > 0) {
+            await env.FILES.delete(chatKeys);
+            deleted += chatKeys.length;
+          }
+          cursor = list.truncated ? list.cursor : undefined;
+        } while (cursor);
+        return json({ success: true, deleted });
+      }
+
       // ---- File Upload (R2) ----
       if (path === '/api/upload' && request.method === 'POST') {
         const formData = await request.formData();

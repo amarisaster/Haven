@@ -6,7 +6,7 @@ import {
   getIdentity, addIdentity, deleteIdentity,
   uploadFile, getUserStatus, setUserStatus, apiBase,
   archiveCompanion, setActiveCompanionId, activeCompanionId,
-  exportCompanionUrl,
+  exportCompanionUrl, getStorageUsage, clearChatFiles,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -53,6 +53,10 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [userPresence, setUserPresence] = useState('online');
   const [statusSaving, setStatusSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+
+  // Storage
+  const [storage, setStorage] = useState<{ chat: { count: number; bytes: number }; project: { count: number; bytes: number } } | null>(null);
+  const [clearingStorage, setClearingStorage] = useState(false);
 
   // Voice / TTS
   const [ttsMode, setTtsMode] = useState<'browser' | 'elevenlabs'>(() => getTTSSettings().mode);
@@ -130,6 +134,8 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       setUserStatusText(s.custom_status || '');
       setUserPresence(s.presence || 'online');
     }).catch((e) => console.warn('[settings] getUserStatus failed', e));
+
+    getStorageUsage().then(setStorage).catch(() => {});
   }, []);
 
   const saveUserStatus = async () => {
@@ -866,6 +872,50 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         >
           Import from JSON
         </button>
+      </div>
+
+      {/* Storage */}
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '16px' }}>Storage</h3>
+        {storage ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '13px', color: 'var(--haven-text)' }}>Chat Uploads</div>
+                <div style={{ fontSize: '11px', color: 'var(--haven-text-muted)' }}>
+                  {storage.chat.count} file{storage.chat.count !== 1 ? 's' : ''} — {storage.chat.bytes < 1024 * 1024 ? `${Math.round(storage.chat.bytes / 1024)} KB` : `${(storage.chat.bytes / (1024 * 1024)).toFixed(1)} MB`}
+                </div>
+              </div>
+              {storage.chat.count > 0 && (
+                <button
+                  onClick={async () => {
+                    if (!confirm('Delete all uploaded images/files from chat? Messages stay, but embedded images will break.')) return;
+                    setClearingStorage(true);
+                    try {
+                      await clearChatFiles();
+                      setStorage(prev => prev ? { ...prev, chat: { count: 0, bytes: 0 } } : prev);
+                    } catch {}
+                    setClearingStorage(false);
+                  }}
+                  disabled={clearingStorage}
+                  style={{
+                    padding: '6px 12px', borderRadius: '6px',
+                    border: '1px solid #7f1d1d', background: 'transparent',
+                    color: '#f87171', fontSize: '11px', cursor: 'pointer',
+                  }}
+                >{clearingStorage ? 'Clearing...' : 'Clear'}</button>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: '13px', color: 'var(--haven-text)' }}>Project Files</div>
+              <div style={{ fontSize: '11px', color: 'var(--haven-text-muted)' }}>
+                {storage.project.count} file{storage.project.count !== 1 ? 's' : ''} — {storage.project.bytes < 1024 * 1024 ? `${Math.round(storage.project.bytes / 1024)} KB` : `${(storage.project.bytes / (1024 * 1024)).toFixed(1)} MB`}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>Loading...</div>
+        )}
       </div>
 
       {/* Data & Export */}

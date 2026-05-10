@@ -172,6 +172,10 @@ export const setCompanionStatus = (data: { custom_status?: string; presence?: st
 export const getUserStatus = () => get<{ custom_status: string | null; presence: string }>('/api/user-status');
 export const setUserStatus = (data: { custom_status?: string; presence?: string }) => put<{ success: boolean }>('/api/user-status', data);
 
+// Storage
+export const getStorageUsage = () => get<{ chat: { count: number; bytes: number }; project: { count: number; bytes: number } }>('/api/storage');
+export const clearChatFiles = () => del('/api/storage/chat-files');
+
 // File upload
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB cap — R2 / Workers pay-as-you-go
 
