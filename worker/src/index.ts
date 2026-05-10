@@ -561,14 +561,16 @@ async function inferenceWithTools(
   const baseOllamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
 
   let url: string;
+  let isAnthropic = false;
   if (provider === 'ollama') {
-    // Ollama Cloud's OpenAI-compat endpoint (/v1/chat/completions) returns 405
-    // when `tools` is present in the body. The native /api/chat endpoint
-    // accepts OpenAI-shaped tools and returns OpenAI-shaped responses when
-    // stream is disabled. Confirmed by Nexus-Gateway's inference layer.
     url = `${baseOllamaUrl}/api/chat`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
+  } else if (detectedProvider === 'anthropic' && customBaseUrl && customKey) {
+    isAnthropic = true;
+    url = `${customBaseUrl}/messages`;
+    headers['x-api-key'] = customKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
     url = `${customBaseUrl}/chat/completions`;
     headers['Authorization'] = `Bearer ${customKey}`;
   } else {
@@ -582,14 +584,22 @@ async function inferenceWithTools(
   const MAX_ITERATIONS = 5;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const resp = await fetch(url, {
-      method: 'POST', headers,
-      // stream:false is explicit because Ollama's native /api/chat defaults
-      // to true, which returns NDJSON and crashes the downstream .json()
-      // call with "Unexpected non-whitespace character after JSON". OpenAI-
-      // compat endpoints default false and ignore the field.
-      body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: 0.8, stream: false }),
-    });
+    let resp: Response;
+    if (isAnthropic) {
+      const { system, messages: anthropicMsgs } = buildAnthropicMessages(conversation);
+      const body: any = { model, messages: anthropicMsgs, max_tokens: 4096, temperature: 0.8, stream: false };
+      if (system) body.system = system;
+      if (openaiTools.length > 0) {
+        body.tools = openaiToolsToAnthropic(openaiTools);
+        body.tool_choice = { type: 'auto' };
+      }
+      resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    } else {
+      resp = await fetch(url, {
+        method: 'POST', headers,
+        body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: 0.8, stream: false }),
+      });
+    }
 
     if (!resp.ok) {
       const errText = await resp.text();
@@ -597,54 +607,79 @@ async function inferenceWithTools(
     }
 
     const data = await resp.json() as any;
-    const choice = data.choices?.[0];
-    const message = choice?.message;
 
-    if (!message?.tool_calls?.length) {
-      const content = (message?.content || '').trim();
-      if (content) return { content, toolResults: allToolResults };
-      // Empty content AND no tool calls — model stalled. Happens with
-      // Ollama on non-prompty inputs (e.g., user message was just a GIF
-      // URL with no text). Break out of the loop early so the
-      // force-text-pass below takes over and forces prose.
-      break;
-    }
+    if (isAnthropic) {
+      const textParts = (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+      const toolUses = (data.content || []).filter((b: any) => b.type === 'tool_use');
 
-    // Add assistant message with tool calls
-    conversation.push(message);
-
-    // Execute each tool
-    for (const tc of message.tool_calls) {
-      const fn = tc.function;
-      let result = `Unknown tool: ${fn.name}`;
-      let ok = false;
-      let server: string | undefined;
-
-      try {
-        const args = JSON.parse(fn.arguments || '{}');
-        if (NATIVE_TOOL_NAMES.has(fn.name)) {
-          // Haven-native — run locally against D1 instead of hitting MCP.
-          result = await executeNativeTool(fn.name, args, env.DB, companionId);
-          ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
-          server = 'haven';
-        } else {
-          const toolInfo = toolLookup.get(fn.name);
-          if (toolInfo) {
-            server = toolInfo.server_url;
-            result = await executeMcpTool(
-              toolInfo.server_url, toolInfo.server_key, fn.name, args,
-              toolInfo.transport || 'streamable',
-            );
-            ok = !result.startsWith('Tool error');
-          }
-        }
-      } catch (e) {
-        result = `Tool error: ${e}`;
-        ok = false;
+      if (toolUses.length === 0) {
+        if (textParts.trim()) return { content: textParts, toolResults: allToolResults };
+        break;
       }
 
-      allToolResults.push({ name: fn.name, result, server, ok });
-      conversation.push({ role: 'tool', content: result, tool_call_id: tc.id } as any);
+      const assistantContent: any[] = [];
+      if (textParts) assistantContent.push({ type: 'text', text: textParts });
+      for (const tu of toolUses) assistantContent.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
+      conversation.push({ role: 'assistant', content: assistantContent } as any);
+
+      const toolResultContent: any[] = [];
+      for (const tu of toolUses) {
+        let result = `Unknown tool: ${tu.name}`;
+        let ok = false;
+        let server: string | undefined;
+        try {
+          if (NATIVE_TOOL_NAMES.has(tu.name)) {
+            result = await executeNativeTool(tu.name, tu.input, env.DB, companionId);
+            ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
+            server = 'haven';
+          } else {
+            const toolInfo = toolLookup.get(tu.name);
+            if (toolInfo) {
+              server = toolInfo.server_url;
+              result = await executeMcpTool(toolInfo.server_url, toolInfo.server_key, tu.name, tu.input, toolInfo.transport || 'streamable');
+              ok = !result.startsWith('Tool error');
+            }
+          }
+        } catch (e) { result = `Tool error: ${e}`; ok = false; }
+        allToolResults.push({ name: tu.name, result, server, ok });
+        toolResultContent.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+      }
+      conversation.push({ role: 'user', content: toolResultContent } as any);
+    } else {
+      const choice = data.choices?.[0];
+      const message = choice?.message;
+
+      if (!message?.tool_calls?.length) {
+        const content = (message?.content || '').trim();
+        if (content) return { content, toolResults: allToolResults };
+        break;
+      }
+
+      conversation.push(message);
+
+      for (const tc of message.tool_calls) {
+        const fn = tc.function;
+        let result = `Unknown tool: ${fn.name}`;
+        let ok = false;
+        let server: string | undefined;
+        try {
+          const args = JSON.parse(fn.arguments || '{}');
+          if (NATIVE_TOOL_NAMES.has(fn.name)) {
+            result = await executeNativeTool(fn.name, args, env.DB, companionId);
+            ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
+            server = 'haven';
+          } else {
+            const toolInfo = toolLookup.get(fn.name);
+            if (toolInfo) {
+              server = toolInfo.server_url;
+              result = await executeMcpTool(toolInfo.server_url, toolInfo.server_key, fn.name, args, toolInfo.transport || 'streamable');
+              ok = !result.startsWith('Tool error');
+            }
+          }
+        } catch (e) { result = `Tool error: ${e}`; ok = false; }
+        allToolResults.push({ name: fn.name, result, server, ok });
+        conversation.push({ role: 'tool', content: result, tool_call_id: tc.id } as any);
+      }
     }
   }
 
@@ -783,6 +818,38 @@ async function getSettingValue(db: D1Database, key: string): Promise<string | nu
   return row?.value || null;
 }
 
+function buildAnthropicMessages(messages: Array<{ role: string; content: any }>): { system: string; messages: Array<{ role: string; content: any }> } {
+  let system = '';
+  const filtered: Array<{ role: string; content: any }> = [];
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      system += (system ? '\n\n' : '') + (typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content));
+    } else if (msg.role === 'tool') {
+      const toolResult = { type: 'tool_result' as const, tool_use_id: (msg as any).tool_call_id, content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content) };
+      const lastMsg = filtered[filtered.length - 1];
+      if (lastMsg?.role === 'user' && Array.isArray(lastMsg.content)) {
+        lastMsg.content.push(toolResult);
+      } else {
+        filtered.push({ role: 'user', content: [toolResult] });
+      }
+    } else if (msg.role === 'assistant' && (msg as any).tool_calls) {
+      const content: any[] = [];
+      if (msg.content) content.push({ type: 'text', text: msg.content });
+      for (const tc of (msg as any).tool_calls) {
+        content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input: JSON.parse(tc.function.arguments || '{}') });
+      }
+      filtered.push({ role: 'assistant', content });
+    } else {
+      filtered.push({ role: msg.role, content: msg.content });
+    }
+  }
+  return { system, messages: filtered };
+}
+
+function openaiToolsToAnthropic(openaiTools: any[]): any[] {
+  return openaiTools.map(t => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
+}
+
 // Returns whether a provider's toggle is on. Missing/empty = enabled
 // (default on, back-compat). Only the literal string "false" disables.
 async function isProviderEnabled(db: D1Database, provider: 'openrouter' | 'ollama' | 'custom'): Promise<boolean> {
@@ -817,12 +884,18 @@ async function* streamInference(
   const detectedProvider = await getSettingValue(env.DB, 'provider');
 
   let useNativeOllama = false;
+  let isAnthropic = false;
   const baseOllamaUrl = ollamaUrl || 'https://api.ollama.com';
 
   if (provider === 'ollama') {
     url = `${baseOllamaUrl}/v1/chat/completions`;
     if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (customBaseUrl && customKey && ['openai', 'anthropic', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
+  } else if (detectedProvider === 'anthropic' && customBaseUrl && customKey) {
+    isAnthropic = true;
+    url = `${customBaseUrl}/messages`;
+    headers['x-api-key'] = customKey;
+    headers['anthropic-version'] = '2023-06-01';
+  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(detectedProvider || '')) {
     url = `${customBaseUrl}/chat/completions`;
     headers['Authorization'] = `Bearer ${customKey}`;
   } else {
@@ -831,16 +904,24 @@ async function* streamInference(
     headers['X-Title'] = 'Haven';
   }
 
-  let response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: true,
-      temperature: 0.8,
-    }),
-  });
+  let response: Response;
+  if (isAnthropic) {
+    const { system, messages: anthropicMsgs } = buildAnthropicMessages(messages);
+    const body: any = { model, messages: anthropicMsgs, max_tokens: 4096, stream: true, temperature: 0.8 };
+    if (system) body.system = system;
+    response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  } else {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        temperature: 0.8,
+      }),
+    });
+  }
 
   // Ollama fallback: if OpenAI-compatible endpoint fails, try native /api/chat
   if (!response.ok && provider === 'ollama') {
@@ -886,6 +967,17 @@ async function* streamInference(
           if (parsed.done) return;
           const token = parsed.message?.content;
           if (token) yield token;
+        } catch {}
+      } else if (isAnthropic) {
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6).trim();
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+            yield parsed.delta.text;
+          } else if (parsed.type === 'message_stop') {
+            return;
+          }
         } catch {}
       } else {
         // OpenAI SSE format: data: {...}
@@ -1765,7 +1857,6 @@ export default {
         const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
         const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
         if (customEnabled && customKey && customBaseUrl) {
-          // Detect provider from URL, not the shared provider field
           let customProvider = 'custom';
           if (customBaseUrl.includes('huggingface') || customBaseUrl.includes('hf.co')) customProvider = 'huggingface';
           else if (customBaseUrl.includes('groq.com')) customProvider = 'groq';
@@ -1773,20 +1864,32 @@ export default {
           else if (customBaseUrl.includes('anthropic.com')) customProvider = 'anthropic';
           else if (customBaseUrl.includes('x.ai')) customProvider = 'xai';
 
-          try {
-            const res = await fetch(`${customBaseUrl}/models`, {
-              headers: { 'Authorization': `Bearer ${customKey}` },
-            });
-            const data = await res.json() as any;
-            for (const m of (data.data || [])) {
-              models.push({
-                id: m.id,
-                name: m.id,
-                provider: customProvider,
-                tier: 'included',
+          if (customProvider === 'anthropic') {
+            try {
+              const res = await fetch(`${customBaseUrl}/models`, {
+                headers: { 'x-api-key': customKey, 'anthropic-version': '2023-06-01' },
               });
+              const data = await res.json() as any;
+              for (const m of (data.data || [])) {
+                models.push({ id: m.id, name: m.display_name || m.id, provider: 'anthropic', tier: 'included', description: m.description || undefined });
+              }
+            } catch {
+              models.push(
+                { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', tier: 'included', context_length: 200000 },
+                { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', tier: 'included', context_length: 200000 },
+              );
             }
-          } catch {}
+          } else {
+            try {
+              const res = await fetch(`${customBaseUrl}/models`, {
+                headers: { 'Authorization': `Bearer ${customKey}` },
+              });
+              const data = await res.json() as any;
+              for (const m of (data.data || [])) {
+                models.push({ id: m.id, name: m.id, provider: customProvider, tier: 'included' });
+              }
+            } catch {}
+          }
         }
 
         return json(models);
