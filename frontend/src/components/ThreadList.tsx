@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Thread } from '../lib/types';
 import { getThreads, deleteThread, renameThread } from '../lib/api';
+import { deleteWallpaper } from '../lib/wallpaper-store';
 import CompanionSwitcher from './CompanionSwitcher';
 
 interface ThreadListProps {
@@ -62,6 +63,7 @@ export default function ThreadList({
     e.stopPropagation();
     if (!confirm('Delete this thread?')) return;
     await deleteThread(id);
+    deleteWallpaper(`wp-${id}`).catch(() => {});
     loadThreads();
   };
 

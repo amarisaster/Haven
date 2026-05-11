@@ -32,6 +32,18 @@ export async function getWallpaper(key: string): Promise<string> {
   }
 }
 
+export async function deleteWallpaper(key: string): Promise<void> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {}
+}
+
 export async function setWallpaper(key: string, value: string): Promise<void> {
   try {
     const db = await openDB();

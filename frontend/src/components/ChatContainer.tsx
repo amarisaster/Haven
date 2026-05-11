@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, ToolCallRecord } from '../lib/types';
 import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
@@ -39,6 +39,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [error, setError] = useState<string | null>(null);
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [userStatus, setUserStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
+  const abortRef = useRef<AbortController | null>(null);
 
   // Poll companion + user status from D1 (both live server-side so they stay
   // consistent across devices / sessions).
@@ -58,8 +59,10 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     return () => { active = false; clearInterval(interval); };
   }, []);
 
-  // Load messages when thread changes
+  // Load messages when thread changes; abort any in-flight stream
   useEffect(() => {
+    if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+    setStreamingContent(null);
     if (!threadId) {
       setMessages([]);
       return;
@@ -89,6 +92,9 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const handleSend = useCallback(async (content: string, image?: string, fileContext?: string) => {
     setError(null);
     setShowMenu(false);
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     // Fold the <file>...</file> block into the persisted content so reloads
     // keep the file attached to the conversation and MessageBubble can
@@ -116,7 +122,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let realCompanionId: string | undefined;
 
     try {
-      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking)) {
+      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, controller.signal)) {
         switch (event.type) {
           case 'thread':
             if (event.threadId && !currentThreadId) {
@@ -186,6 +192,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         }
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Failed to send message');
     }
 
@@ -237,6 +244,9 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     // Resend from the edited message
     setError(null);
     setStreamingContent('');
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     let fullContent = '';
     let responseModel = '';
@@ -244,7 +254,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let notice: string | undefined;
 
     try {
-      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking)) {
+      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking, controller.signal)) {
         switch (event.type) {
           case 'chunk':
             if (event.content) {
@@ -279,6 +289,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         }
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : 'Failed to resend');
     }
 

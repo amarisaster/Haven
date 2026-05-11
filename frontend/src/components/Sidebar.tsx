@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Thread } from '../lib/types';
 import { getThreads, createThread, deleteThread } from '../lib/api';
+import { deleteWallpaper } from '../lib/wallpaper-store';
 
 interface SidebarProps {
   activeThreadId: string | null;
@@ -49,6 +50,7 @@ export default function Sidebar({ activeThreadId, onSelectThread, onNewThread, i
     e.stopPropagation();
     if (!confirm('Delete this thread?')) return;
     await deleteThread(id);
+    deleteWallpaper(`wp-${id}`).catch(() => {});
     loadThreads();
   };
 
