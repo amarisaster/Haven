@@ -34,6 +34,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const textColor = localStorage.getItem('haven-text-color') || undefined;
   const [showMenu, setShowMenu] = useState(false);
   const [showWallpaper, setShowWallpaper] = useState(false);
+  const [thinking, setThinking] = useState(() => localStorage.getItem('haven-thinking') === 'true');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
@@ -78,6 +79,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   useEffect(() => { loadWallpaper(wpKey).then(setWallpaper); }, [wpKey]);
   useEffect(() => { localStorage.setItem(LS_MODEL, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(LS_PROVIDER, selectedProvider); }, [selectedProvider]);
+  useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); }, [thinking]);
 
   const handleModelChange = (model: string, provider: string) => {
     setSelectedModel(model);
@@ -114,7 +116,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let realCompanionId: string | undefined;
 
     try {
-      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image)) {
+      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking)) {
         switch (event.type) {
           case 'thread':
             if (event.threadId && !currentThreadId) {
@@ -218,7 +220,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       setMessages((prev) => [...prev, companionMsg]);
       if (fullContent) notifyCompanionMessage(companionName, fullContent);
     }
-  }, [threadId, selectedModel, selectedProvider, onThreadCreated]);
+  }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking]);
 
   const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
     // Find the index of the edited message
@@ -242,7 +244,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let notice: string | undefined;
 
     try {
-      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider)) {
+      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking)) {
         switch (event.type) {
           case 'chunk':
             if (event.content) {
@@ -295,7 +297,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       setMessages((prev) => [...prev, companionMsg]);
       if (fullContent) notifyCompanionMessage(companionName, fullContent);
     }
-  }, [messages, threadId, selectedModel, selectedProvider]);
+  }, [messages, threadId, selectedModel, selectedProvider, thinking]);
 
   const handleDeleteMessage = useCallback(async (messageId: string) => {
     // Optimistic: drop from the list immediately. If the server delete
@@ -490,6 +492,30 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               >
                 🎨 Wallpaper
               </button>
+
+              {/* Extended thinking toggle */}
+              <div
+                onClick={() => setThinking(!thinking)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 8px', cursor: 'pointer', borderRadius: '6px',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--haven-card)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                <span style={{ fontSize: '12px', color: 'var(--haven-text-secondary)' }}>🧠 Thinking</span>
+                <div style={{
+                  width: '32px', height: '18px', borderRadius: '9px',
+                  background: thinking ? 'var(--haven-accent)' : 'var(--haven-border)',
+                  position: 'relative', transition: 'background 0.2s',
+                }}>
+                  <div style={{
+                    width: '14px', height: '14px', borderRadius: '50%',
+                    background: 'white', position: 'absolute', top: '2px',
+                    left: thinking ? '16px' : '2px', transition: 'left 0.2s',
+                  }} />
+                </div>
+              </div>
             </div>
           )}
         </div>

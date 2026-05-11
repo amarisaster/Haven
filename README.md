@@ -439,10 +439,12 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 
 ## Recent updates
 
-**v1.7.3** — Anthropic API + UX Fixes
+**v1.7.3** — Thinking Models + Anthropic API + UX Fixes
 
 Bug fix + quality-of-life release from community testing.
 
+- **Thinking model support** — models that output `<think>` / `<thinking>` blocks (DeepSeek R1, QwQ, etc.) now render a collapsible "Thought process" section above the response. During streaming, a pulsing "Thinking..." indicator shows the model is reasoning. Collapsed by default after completion — click to expand and see the full chain of thought.
+- **Extended thinking toggle** — Anthropic models support native extended thinking mode. Toggle it from the chat menu (brain icon) — when enabled, Haven sends `thinking: { type: 'enabled', budget_tokens: 10000 }` to the Anthropic API. The model's reasoning appears in the same collapsible block. Persists across sessions via localStorage.
 - **Native Anthropic API support** — direct Claude API keys now work end-to-end. Model listing fetches from Anthropic's `/models` endpoint (falls back to Claude Sonnet 4 + Haiku 4.5), streaming uses `content_block_delta` SSE events, tool calling uses `tool_use`/`tool_result` blocks. No OpenRouter proxy needed.
 - **Anthropic routing fix** — chat requests were checking a DB setting instead of the request's provider field, causing 401s when selecting Anthropic models. Fixed in both `inferenceWithTools` and `streamInference`.
 - **Tool-call limit fallback for Anthropic** — when a model hit the 5-iteration tool loop cap, the "force text" fallback was sending OpenAI-format requests regardless of provider. Now builds proper Anthropic message format for the nudge.

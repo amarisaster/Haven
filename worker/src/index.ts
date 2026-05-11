@@ -541,6 +541,7 @@ async function inferenceWithTools(
   env: Env,
   tools: McpTool[],
   companionId: number,
+  thinking = false,
 ): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
@@ -590,7 +591,9 @@ async function inferenceWithTools(
     let resp: Response;
     if (isAnthropic) {
       const { system, messages: anthropicMsgs } = buildAnthropicMessages(conversation);
-      const body: any = { model, messages: anthropicMsgs, max_tokens: 4096, temperature: 0.8, stream: false };
+      const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: false };
+      if (!thinking) body.temperature = 0.8;
+      if (thinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
       if (system) body.system = system;
       if (openaiTools.length > 0) {
         body.tools = openaiToolsToAnthropic(openaiTools);
@@ -612,11 +615,13 @@ async function inferenceWithTools(
     const data = await resp.json() as any;
 
     if (isAnthropic) {
+      const thinkingParts = (data.content || []).filter((b: any) => b.type === 'thinking').map((b: any) => b.thinking).join('');
       const textParts = (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
       const toolUses = (data.content || []).filter((b: any) => b.type === 'tool_use');
+      const fullText = thinkingParts ? `<think>${thinkingParts}</think>\n${textParts}` : textParts;
 
       if (toolUses.length === 0) {
-        if (textParts.trim()) return { content: textParts, toolResults: allToolResults };
+        if (fullText.trim()) return { content: fullText, toolResults: allToolResults };
         break;
       }
 
@@ -879,6 +884,7 @@ async function* streamInference(
   model: string,
   provider: string,
   env: Env,
+  thinking = false,
 ): AsyncGenerator<string> {
   let url: string;
   const headers: Record<string, string> = {
@@ -923,7 +929,9 @@ async function* streamInference(
   let response: Response;
   if (isAnthropic) {
     const { system, messages: anthropicMsgs } = buildAnthropicMessages(messages);
-    const body: any = { model, messages: anthropicMsgs, max_tokens: 4096, stream: true, temperature: 0.8 };
+    const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: true };
+    if (!thinking) body.temperature = 0.8;
+    if (thinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
     if (system) body.system = system;
     response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   } else {
@@ -963,6 +971,7 @@ async function* streamInference(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let anthropicInThinking = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -989,11 +998,20 @@ async function* streamInference(
         const data = trimmed.slice(6).trim();
         try {
           const parsed = JSON.parse(data);
-          if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+          if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'thinking') {
+            yield '<think>';
+          } else if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'thinking_delta') {
+            yield parsed.delta.thinking;
+          } else if (parsed.type === 'content_block_stop' && anthropicInThinking) {
+            yield '</think>\n';
+          } else if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
             yield parsed.delta.text;
           } else if (parsed.type === 'message_stop') {
             return;
           }
+          anthropicInThinking = parsed.type === 'content_block_start' && parsed.content_block?.type === 'thinking'
+            ? true
+            : parsed.type === 'content_block_stop' ? false : anthropicInThinking;
         } catch {}
       } else {
         // OpenAI SSE format: data: {...}
@@ -1116,7 +1134,7 @@ export default {
       // ---- Chat (SSE streaming) ----
       if (path === '/api/chat' && request.method === 'POST') {
         const body = await request.json() as any;
-        let { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image } = body;
+        let { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image, thinking = false } = body;
 
         if (!message) return json({ error: 'message required' }, 400);
 
@@ -1212,7 +1230,7 @@ export default {
               if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
                 // Non-streaming path with function calling
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId);
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking);
                   fullResponse = toolResult.content;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
@@ -1239,14 +1257,14 @@ export default {
                     notice += `Provider error: ${errStr.slice(0, 200)}`;
                   }
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
-                  for await (const token of streamInference(chatMessages, model, provider, env)) {
+                  for await (const token of streamInference(chatMessages, model, provider, env, thinking)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                   }
                 }
               } else {
                 // Stream tokens (no tools)
-                for await (const token of streamInference(chatMessages, model, provider, env)) {
+                for await (const token of streamInference(chatMessages, model, provider, env, thinking)) {
                   fullResponse += token;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                 }

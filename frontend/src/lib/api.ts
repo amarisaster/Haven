@@ -213,11 +213,12 @@ export async function* sendChat(
   model: string,
   provider: string,
   image?: string,
+  thinking?: boolean,
 ): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string; results?: unknown[]; emoji?: string; notice?: string; user_message_id?: string; companion_message_id?: string }> {
   const res = await fetch(`${apiBase()}/api/chat`, {
     method: 'POST',
     headers: scopedHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}) }),
+    body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}) }),
   });
 
   if (!res.ok || !res.body) throw new Error(`Chat failed: ${res.status}`);
