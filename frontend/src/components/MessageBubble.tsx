@@ -205,6 +205,7 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string): React.Reac
             alt=""
             style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
             loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
         );
       case 'video':
@@ -425,7 +426,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               )}
               {renderContentParts(parsedParts, `m-${message.id}`)}
               {message.image && (
-                <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
+                <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               )}
               {isStreaming && !message.content && (
                 // Typing indicator — shown while waiting for the first token

@@ -584,6 +584,9 @@ async function inferenceWithTools(
   }
 
   const conversation = [...messages];
+  if (thinking && !isAnthropic && conversation.length > 0 && conversation[0].role === 'system') {
+    conversation[0] = { ...conversation[0], content: conversation[0].content + '\n\nThink through your reasoning step by step inside <think> tags before giving your response. Example:\n<think>\n[your reasoning here]\n</think>\n[your response here]' };
+  }
   const allToolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> = [];
   const MAX_ITERATIONS = 5;
 
@@ -926,9 +929,14 @@ async function* streamInference(
     headers['X-Title'] = 'Haven';
   }
 
+  const inferMsgs = [...messages];
+  if (thinking && !isAnthropic && inferMsgs.length > 0 && inferMsgs[0].role === 'system') {
+    inferMsgs[0] = { ...inferMsgs[0], content: inferMsgs[0].content + '\n\nThink through your reasoning step by step inside <think> tags before giving your response. Example:\n<think>\n[your reasoning here]\n</think>\n[your response here]' };
+  }
+
   let response: Response;
   if (isAnthropic) {
-    const { system, messages: anthropicMsgs } = buildAnthropicMessages(messages);
+    const { system, messages: anthropicMsgs } = buildAnthropicMessages(inferMsgs);
     const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: true };
     if (!thinking) body.temperature = 0.8;
     if (thinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
@@ -940,7 +948,7 @@ async function* streamInference(
       headers,
       body: JSON.stringify({
         model,
-        messages,
+        messages: inferMsgs,
         stream: true,
         temperature: 0.8,
       }),
@@ -953,7 +961,7 @@ async function* streamInference(
     response = await fetch(nativeUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model, messages, stream: true }),
+      body: JSON.stringify({ model, messages: inferMsgs, stream: true }),
     });
     if (response.ok) {
       useNativeOllama = true;
@@ -1535,46 +1543,43 @@ export default {
           'INSERT INTO companion (name, avatar_url) VALUES (?, ?)'
         ).bind(String(c.name).trim(), c.avatar_url || null).run();
         const newId = Number(result.meta.last_row_id);
-        // Insert scoped rows. We silently drop anything malformed rather than
-        // failing the whole import — a partial restore beats a total refusal.
+        const errors: string[] = [];
         for (const row of (bundle.identity || [])) {
           try {
             await env.DB.prepare(
               'INSERT INTO identity (companion_id, content, identity_type, priority, pinned) VALUES (?, ?, ?, ?, ?)'
             ).bind(newId, row.content, row.identity_type || 'trait', row.priority ?? 5, row.pinned ? 1 : 0).run();
-          } catch {}
+          } catch (e: any) { errors.push(`identity: ${e?.message || 'unknown'}`); }
         }
         for (const row of (bundle.memories || [])) {
           try {
             await env.DB.prepare(
               'INSERT INTO memories (companion_id, content, memory_type, emotional_weight) VALUES (?, ?, ?, ?)'
             ).bind(newId, row.content, row.memory_type || 'core', row.emotional_weight ?? 5).run();
-          } catch {}
+          } catch (e: any) { errors.push(`memory: ${e?.message || 'unknown'}`); }
         }
         for (const row of (bundle.people || [])) {
           try {
             await env.DB.prepare(
               'INSERT INTO people (companion_id, name, category, content) VALUES (?, ?, ?, ?)'
             ).bind(newId, row.name, row.category || 'friend', row.content).run();
-          } catch {}
+          } catch (e: any) { errors.push(`person: ${e?.message || 'unknown'}`); }
         }
         for (const row of (bundle.important_dates || [])) {
           try {
             await env.DB.prepare(
               'INSERT INTO important_dates (companion_id, date_name, actual_date, date_type, recurring) VALUES (?, ?, ?, ?, ?)'
             ).bind(newId, row.date_name, row.actual_date, row.date_type || 'event', row.recurring ? 1 : 0).run();
-          } catch {}
+          } catch (e: any) { errors.push(`date: ${e?.message || 'unknown'}`); }
         }
-        // Imported files carry only the extracted text, not the original
-        // bytes — r2_key is empty to signal "imported, no binary".
         for (const row of (bundle.files || [])) {
           try {
             await env.DB.prepare(
               'INSERT INTO companion_files (companion_id, filename, r2_key, file_size, file_type, extracted_text) VALUES (?, ?, ?, ?, ?, ?)'
             ).bind(newId, row.filename, '', row.file_size || null, row.file_type || null, row.extracted_text || '').run();
-          } catch {}
+          } catch (e: any) { errors.push(`file: ${e?.message || 'unknown'}`); }
         }
-        return json({ success: true, id: newId });
+        return json({ success: true, id: newId, ...(errors.length > 0 ? { warnings: errors } : {}) });
       }
 
       // Path-based routes: /api/companions/:id/...

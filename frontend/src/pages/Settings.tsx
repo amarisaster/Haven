@@ -225,6 +225,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   };
 
   const handleDeleteIdentity = async (id: number) => {
+    if (!confirm('Delete this identity entry? This cannot be undone.')) return;
     await deleteIdentity(id);
     loadIdentities();
   };
