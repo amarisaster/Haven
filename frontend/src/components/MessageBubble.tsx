@@ -380,7 +380,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               {isThinking && (
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
-                  padding: '6px 0', color: 'var(--haven-text-muted)', fontSize: '12px',
+                  padding: '6px 0', color: 'var(--haven-text-muted)', fontSize: `${Math.max(fontSize - 3, 11)}px`,
                   cursor: 'pointer',
                 }} onClick={(e) => { e.stopPropagation(); setThinkingExpanded(!thinkingExpanded); }}>
                   <span style={{
@@ -398,7 +398,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                 >
                   <div style={{
                     display: 'flex', alignItems: 'center', gap: '6px',
-                    color: 'var(--haven-text-muted)', fontSize: '11px', cursor: 'pointer',
+                    color: 'var(--haven-text-muted)', fontSize: `${Math.max(fontSize - 3, 11)}px`, cursor: 'pointer',
                     userSelect: 'none',
                   }}>
                     <span style={{ fontSize: '8px', transition: 'transform 0.15s', transform: thinkingExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
@@ -407,9 +407,9 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                   {thinkingExpanded && (
                     <div style={{
                       marginTop: '6px', padding: '8px', borderRadius: '6px',
-                      background: 'var(--haven-surface)', fontSize: '11px',
+                      background: 'var(--haven-surface)', fontSize: `${Math.max(fontSize - 2, 11)}px`,
                       color: 'var(--haven-text-muted)', lineHeight: '1.5',
-                      maxHeight: '200px', overflowY: 'auto',
+                      maxHeight: '300px', overflowY: 'auto',
                       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                     }}>{thinking}</div>
                   )}
@@ -418,9 +418,9 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               {(isThinking && thinkingExpanded && thinking) && (
                 <div style={{
                   marginBottom: '6px', padding: '8px', borderRadius: '6px',
-                  background: 'var(--haven-surface)', fontSize: '11px',
+                  background: 'var(--haven-surface)', fontSize: `${Math.max(fontSize - 2, 11)}px`,
                   color: 'var(--haven-text-muted)', lineHeight: '1.5',
-                  maxHeight: '200px', overflowY: 'auto',
+                  maxHeight: '300px', overflowY: 'auto',
                   whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                 }}>{thinking}</div>
               )}

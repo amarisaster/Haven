@@ -52,13 +52,24 @@ async function parseJson<T>(res: Response, path: string): Promise<T> {
   }
 }
 
+async function safeFetch(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${apiBase()}${path}`, init);
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(`Network error — check your connection or Worker URL. (${path})`);
+    }
+    throw err;
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, { headers: scopedHeaders() });
+  const res = await safeFetch(path, { headers: scopedHeaders() });
   return parseJson<T>(res, path);
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
+  const res = await safeFetch(path, {
     method: 'POST',
     headers: scopedHeaders({ 'Content-Type': 'application/json' }),
     body: body ? JSON.stringify(body) : undefined,
@@ -67,7 +78,7 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${apiBase()}${path}`, {
+  const res = await safeFetch(path, {
     method: 'PUT',
     headers: scopedHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
@@ -76,7 +87,7 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function del(path: string): Promise<void> {
-  await fetch(`${apiBase()}${path}`, { method: 'DELETE', headers: scopedHeaders() });
+  await safeFetch(path, { method: 'DELETE', headers: scopedHeaders() });
 }
 
 // Threads
@@ -86,12 +97,13 @@ export const deleteThread = (id: string) => del(`/api/threads/${id}`);
 export const renameThread = (id: string, title: string) => put<{ success: boolean }>(`/api/threads/${id}`, { title });
 export const deleteMessage = (id: string) => del(`/api/messages/${id}`);
 export async function reactMessage(messageId: string, emoji: string): Promise<{ reactions: string[] }> {
-  const res = await fetch(`${apiBase()}/api/messages/${messageId}/react`, {
+  const path = `/api/messages/${messageId}/react`;
+  const res = await fetch(`${apiBase()}${path}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', 'X-Companion-Id': String(activeCompanionId()) },
+    headers: scopedHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ emoji }),
   });
-  return res.json();
+  return parseJson<{ reactions: string[] }>(res, path);
 }
 
 // Messages
@@ -216,24 +228,36 @@ export async function* sendChat(
   thinking?: boolean,
   signal?: AbortSignal,
 ): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string; results?: unknown[]; emoji?: string; notice?: string; user_message_id?: string; companion_message_id?: string }> {
-  const res = await fetch(`${apiBase()}/api/chat`, {
-    method: 'POST',
-    headers: scopedHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}) }),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/api/chat`, {
+      method: 'POST',
+      headers: scopedHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}) }),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error('Network error — check your connection or Worker URL.');
+    }
+    throw err;
+  }
 
   if (!res.ok || !res.body) throw new Error(`Chat failed: ${res.status}`);
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  const MAX_BUFFER = 512 * 1024;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
+    if (buffer.length > MAX_BUFFER) {
+      buffer = buffer.slice(-MAX_BUFFER);
+    }
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 

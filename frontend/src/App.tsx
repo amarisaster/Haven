@@ -46,7 +46,7 @@ export default function App() {
       const c = await getCompanion();
       setCompanionName(c.name);
       setCompanionAvatar(c.avatar_url || '');
-      if (c.name === 'Companion') setNeedsSetup(true);
+      if (c.name === 'Companion' && !localStorage.getItem('haven-setup-done')) setNeedsSetup(true);
     } catch {
       setNeedsSetup(true);
     }
@@ -123,6 +123,7 @@ export default function App() {
   }, []);
 
   const handleSetupComplete = useCallback(() => {
+    localStorage.setItem('haven-setup-done', '1');
     setNeedsSetup(false);
     getCompanion()
       .then((c) => {
