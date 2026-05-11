@@ -1937,15 +1937,23 @@ export default {
           else if (customBaseUrl.includes('x.ai')) customProvider = 'xai';
 
           if (customProvider === 'anthropic') {
+            let anthropicLoaded = false;
             try {
               const res = await fetch(`${customBaseUrl}/models`, {
-                headers: { 'x-api-key': customKey, 'anthropic-version': '2025-01-01' },
+                headers: { 'x-api-key': customKey, 'anthropic-version': '2023-06-01' },
               });
-              const data = await res.json() as any;
-              for (const m of (data.data || [])) {
-                models.push({ id: m.id, name: m.display_name || m.id, provider: 'anthropic', tier: 'included', description: m.description || undefined });
+              if (res.ok) {
+                const data = await res.json() as any;
+                const items = data.data || [];
+                if (items.length > 0) {
+                  for (const m of items) {
+                    models.push({ id: m.id, name: m.display_name || m.id, provider: 'anthropic', tier: 'included', description: m.description || undefined });
+                  }
+                  anthropicLoaded = true;
+                }
               }
-            } catch {
+            } catch {}
+            if (!anthropicLoaded) {
               models.push(
                 { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', tier: 'included', context_length: 200000 },
                 { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', tier: 'included', context_length: 200000 },
