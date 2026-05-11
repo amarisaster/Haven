@@ -27,5 +27,8 @@ html, body, #root {
 textarea { resize: none !important; }
 html, body { overscroll-behavior: none; }
 
-.hide-scrollbar::-webkit-scrollbar { display: none; }
-.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--haven-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--haven-text-muted); }
+* { scrollbar-width: thin; scrollbar-color: var(--haven-border) transparent; }

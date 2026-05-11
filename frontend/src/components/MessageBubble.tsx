@@ -321,7 +321,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
       {isCompanion && companionAvatar && (
         <img src={companionAvatar} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, alignSelf: 'flex-end' }} />
       )}
-      <div style={{ maxWidth: '80%', minWidth: '60px' }}>
+      <div style={{ maxWidth: '85%', minWidth: '60px' }}>
         {/* Bubble */}
         <div
           style={{

@@ -1934,7 +1934,7 @@ export default {
           if (customProvider === 'anthropic') {
             try {
               const res = await fetch(`${customBaseUrl}/models`, {
-                headers: { 'x-api-key': customKey, 'anthropic-version': '2023-06-01' },
+                headers: { 'x-api-key': customKey, 'anthropic-version': '2025-01-01' },
               });
               const data = await res.json() as any;
               for (const m of (data.data || [])) {
@@ -1944,6 +1944,8 @@ export default {
               models.push(
                 { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', tier: 'included', context_length: 200000 },
                 { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', tier: 'included', context_length: 200000 },
+                { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: 'anthropic', tier: 'included', context_length: 200000 },
+                { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic', tier: 'included', context_length: 200000 },
               );
             }
           } else {
