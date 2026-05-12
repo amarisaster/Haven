@@ -181,17 +181,22 @@ function renderFormatted(text: string): React.ReactNode[] {
 }
 
 function parseThinking(content: string): { thinking: string | null; isThinking: boolean; response: string } {
-  const openMatch = content.match(/^\s*<think(?:ing)?>/i);
-  if (!openMatch) return { thinking: null, isThinking: false, response: content };
-  const closeMatch = content.match(/<\/think(?:ing)?>/i);
-  if (!closeMatch) {
-    return { thinking: content.slice(openMatch[0].length), isThinking: true, response: '' };
+  const openMatch = content.match(/<think(?:ing)?>/i);
+  if (!openMatch || openMatch.index === undefined) return { thinking: null, isThinking: false, response: content };
+
+  const before = content.slice(0, openMatch.index).trim();
+  const afterOpen = content.slice(openMatch.index + openMatch[0].length);
+
+  const closeMatch = afterOpen.match(/<\/think(?:ing)?>/i);
+  if (!closeMatch || closeMatch.index === undefined) {
+    return { thinking: afterOpen, isThinking: true, response: before };
   }
-  const fullMatch = content.match(/^\s*<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>\s*/i);
-  if (fullMatch) {
-    return { thinking: fullMatch[1].trim(), isThinking: false, response: content.slice(fullMatch[0].length) };
-  }
-  return { thinking: null, isThinking: false, response: content };
+
+  const thinking = afterOpen.slice(0, closeMatch.index).trim();
+  const after = afterOpen.slice(closeMatch.index + closeMatch[0].length).trim();
+  const response = [before, after].filter(Boolean).join('\n');
+
+  return { thinking: thinking || null, isThinking: false, response };
 }
 
 function formatTimestamp(dateStr: string): string {
