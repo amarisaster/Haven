@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import type { Identity } from '../lib/types';
 import {
   getCompanion, updateCompanion,
@@ -10,7 +10,7 @@ import {
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
-import FilesPanel from '../components/FilesPanel';
+const FilesPanel = lazy(() => import('../components/FilesPanel'));
 
 interface SettingsProps {
   onImport?: () => void;
@@ -68,12 +68,11 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   useEffect(() => {
     const loadVoices = () => setVoices(getBrowserVoices());
     loadVoices();
-    // Some Android WebView builds don't expose speechSynthesis; without this
-    // guard, addEventListener throws in the effect and React 18 unmounts the
-    // whole Settings component — that's the "black void" Settings bug.
-    if (typeof speechSynthesis === 'undefined') return;
-    speechSynthesis.addEventListener('voiceschanged', loadVoices);
-    return () => speechSynthesis.removeEventListener('voiceschanged', loadVoices);
+    try {
+      if (typeof speechSynthesis === 'undefined') return;
+      speechSynthesis.addEventListener('voiceschanged', loadVoices);
+      return () => { try { speechSynthesis.removeEventListener('voiceschanged', loadVoices); } catch {} };
+    } catch {}
   }, []);
 
   const [voiceSaving, setVoiceSaving] = useState(false);
@@ -484,7 +483,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           borderTop: '1px solid var(--haven-border)',
         }}>
           <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>Project Files</h4>
-          <FilesPanel companionId={compId} />
+          <Suspense fallback={<div style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>Loading...</div>}>
+            <FilesPanel companionId={compId} />
+          </Suspense>
         </div>
 
         {/* Archive companion — v1.7 multi-companion. The default seed
