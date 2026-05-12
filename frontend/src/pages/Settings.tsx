@@ -96,21 +96,13 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [newType, setNewType] = useState('personality');
   const [idLoading, setIdLoading] = useState(false);
 
-  useEffect(() => {
-    getCompanion().then((c) => {
-      setCompName(c.name);
-      setCompId(c.id);
-      setAvatarUrl(c.avatar_url || '');
-    }).catch((e) => console.warn('[settings] getCompanion failed', e));
-
+  const refreshProviders = () => {
     getSettings().then((s) => {
       setApiKey(s.openrouter_key || s.ollama_key || s.custom_key || s.ollama_url || '');
-      // Track which providers have keys
       const connected: string[] = [];
       if (s.openrouter_key) connected.push('OpenRouter');
       if (s.ollama_key) connected.push('Ollama');
       if (s.custom_key) {
-        // Detect provider from base URL, not the shared provider field
         const url = s.custom_base_url || '';
         if (url.includes('huggingface') || url.includes('hf.co')) connected.push('Hugging Face');
         else if (url.includes('groq.com')) connected.push('Groq');
@@ -120,13 +112,22 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         else if (s.provider) connected.push(s.provider);
       }
       setConnectedProviders(connected);
-      // Hydrate per-provider toggles from settings. Missing = enabled.
       setProviderEnabled({
         openrouter: (s as any).openrouter_enabled !== 'false',
         ollama: (s as any).ollama_enabled !== 'false',
         custom: (s as any).custom_enabled !== 'false',
       });
     }).catch((e) => console.warn('[settings] getSettings failed', e));
+  };
+
+  useEffect(() => {
+    getCompanion().then((c) => {
+      setCompName(c.name);
+      setCompId(c.id);
+      setAvatarUrl(c.avatar_url || '');
+    }).catch((e) => console.warn('[settings] getCompanion failed', e));
+
+    refreshProviders();
 
     loadIdentities();
 
@@ -211,6 +212,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         settings.provider = 'openrouter';
       }
       await updateSettings(settings);
+      refreshProviders();
       setApiMsg('Saved');
       setTimeout(() => setApiMsg(''), 2000);
     } catch { setApiMsg('Error'); }
@@ -594,6 +596,8 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', margin: '4px 0 0', lineHeight: '1.4' }}>
             {(() => {
               const k = apiKey.trim();
+              if (!k) return 'Supports: OpenRouter, Ollama, OpenAI, Anthropic, Groq, xAI, or any local URL';
+              if (k.includes('***')) return connectedProviders.length > 0 ? `Connected: ${connectedProviders.join(', ')}` : 'Key saved';
               if (k.startsWith('hf_')) return 'Hugging Face detected';
               if (k.startsWith('sk-or-')) return 'OpenRouter detected';
               if (k.startsWith('http')) return 'Local Ollama URL detected';
@@ -602,8 +606,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
               if (k.startsWith('sk-')) return 'OpenAI detected';
               if (k.startsWith('xai-')) return 'xAI / Grok detected';
               if (/^[a-f0-9]+\.[a-zA-Z0-9_-]+$/.test(k)) return 'Ollama Cloud detected';
-              if (k) return 'Will route through OpenRouter';
-              return 'Supports: OpenRouter, Ollama, OpenAI, Anthropic, Groq, xAI, or any local URL';
+              return 'Will route through OpenRouter';
             })()}
           </p>
         </div>

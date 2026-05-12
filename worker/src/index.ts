@@ -1177,7 +1177,7 @@ export default {
       // ---- Auth middleware ----
       const storedToken = await getAuthToken(env.DB);
       if (storedToken) {
-        const isExempt = path === '/' || path === '/health';
+        const isExempt = path === '/' || path === '/health' || path.startsWith('/api/files/') || path === '/api/companion' || path === '/api/companions';
         if (!isExempt) {
           const bearer = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
           const qToken = url.searchParams.get('token');
