@@ -879,7 +879,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       {/* Storage */}
       <div style={sectionStyle}>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '16px' }}>Storage</h3>
-        {storage ? (
+        {storage?.chat && storage?.project ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
@@ -916,7 +916,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             </div>
           </div>
         ) : (
-          <div style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>Loading...</div>
+          <div style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>—</div>
         )}
       </div>
 
