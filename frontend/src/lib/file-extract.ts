@@ -50,7 +50,7 @@ export async function extractFileText(file: File): Promise<ExtractedFile | null>
   // Text / code files
   if (TEXT_TYPES.includes(file.type) || CODE_EXTENSIONS.includes(ext)) {
     const text = await file.text();
-    return { filename: file.name, text: text.slice(0, 50000) };
+    return { filename: file.name, text: text.slice(0, 200000) };
   }
 
   // Unsupported
@@ -77,7 +77,7 @@ async function extractDocx(file: File): Promise<ExtractedFile> {
     }
     paragraphs.push(runs.join(''));
   }
-  return { filename: file.name, text: paragraphs.join('\n').slice(0, 50000) };
+  return { filename: file.name, text: paragraphs.join('\n').slice(0, 200000) };
 }
 
 async function extractEpub(file: File): Promise<ExtractedFile> {
@@ -128,7 +128,7 @@ async function extractEpub(file: File): Promise<ExtractedFile> {
     const text = stripHtmlTags(html);
     if (text.trim()) chunks.push(text.trim());
   }
-  return { filename: file.name, text: chunks.join('\n\n').slice(0, 50000) };
+  return { filename: file.name, text: chunks.join('\n\n').slice(0, 200000) };
 }
 
 function stripHtmlTags(html: string): string {
@@ -171,7 +171,7 @@ async function extractPDF(file: File): Promise<ExtractedFile> {
 
   return {
     filename: file.name,
-    text: pages.join('\n\n--- Page Break ---\n\n').slice(0, 50000),
+    text: pages.join('\n\n--- Page Break ---\n\n').slice(0, 200000),
     pageCount: pdf.numPages,
   };
 }

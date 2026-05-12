@@ -30,6 +30,7 @@ export interface Companion {
   avatar_url: string | null;
   archived_at?: string | null;
   created_at: string;
+  has_identity?: boolean;
 }
 
 export interface CompanionFile {

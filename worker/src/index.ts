@@ -829,8 +829,8 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
   if (fileRows.length > 0) {
     prompt += `## Project Files\n`;
     for (const f of fileRows) {
-      const snippet = f.extracted_text.length > 8000
-        ? f.extracted_text.slice(0, 8000) + '\n…[truncated]'
+      const snippet = f.extracted_text.length > 32000
+        ? f.extracted_text.slice(0, 32000) + '\n…[truncated]'
         : f.extracted_text;
       prompt += `<file name="${f.filename}">\n${snippet}\n</file>\n`;
     }
@@ -1558,15 +1558,24 @@ export default {
       if (path === '/api/companion' && request.method === 'GET') {
         const cid = getCompanionId(request);
         const companion = await env.DB.prepare('SELECT * FROM companion WHERE id = ?').bind(cid).first();
-        return json(companion || { id: cid, name: 'Companion' });
+        const identityCount = await env.DB.prepare('SELECT COUNT(*) as cnt FROM identity WHERE companion_id = ?').bind(cid).first<{ cnt: number }>();
+        const base = companion || { id: cid, name: 'Companion' };
+        return json({ ...base, has_identity: (identityCount?.cnt ?? 0) > 0 });
       }
 
       if (path === '/api/companion' && request.method === 'PUT') {
         const cid = getCompanionId(request);
         const { name, avatar_url } = await request.json() as any;
-        await env.DB.prepare(
-          'UPDATE companion SET name = ?, avatar_url = ? WHERE id = ?'
-        ).bind(name, avatar_url || null, cid).run();
+        const existing = await env.DB.prepare('SELECT id FROM companion WHERE id = ?').bind(cid).first();
+        if (existing) {
+          await env.DB.prepare(
+            'UPDATE companion SET name = ?, avatar_url = ? WHERE id = ?'
+          ).bind(name, avatar_url || null, cid).run();
+        } else {
+          await env.DB.prepare(
+            'INSERT INTO companion (id, name, avatar_url) VALUES (?, ?, ?)'
+          ).bind(cid, name, avatar_url || null).run();
+        }
         return json({ success: true });
       }
 

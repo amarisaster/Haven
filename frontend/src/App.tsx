@@ -64,7 +64,8 @@ export default function App() {
       const c = await getCompanion();
       setCompanionName(c.name || '');
       setCompanionAvatar(c.avatar_url || '');
-      if (c.name && c.name !== 'Companion') {
+      const hasRealName = c.name && c.name !== 'Companion';
+      if (hasRealName || c.has_identity) {
         localStorage.setItem('haven-setup-done', 'true');
       } else if (!localStorage.getItem('haven-setup-done')) {
         setNeedsSetup(true);
