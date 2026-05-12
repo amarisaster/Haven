@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.8.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.8.2-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -80,7 +80,7 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 <p align="center">
   <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/project-files.png" width="55%" alt="Lucian's Settings page showing 10 project files — a DOCX codex plus 9 markdown threads — each with file size and extracted character count" />
 </p>
-<p align="center"><em>Per-companion project files — PDFs, DOCX, EPUB, markdown, code. Extracted text gets baked into that companion's system prompt.</em></p>
+<p align="center"><em>Per-companion project files — PDFs, DOCX, EPUB, markdown, code. Extracted text gets baked into that companion's system prompt. Files up to 200K characters are extracted; up to 32K per file is loaded into the prompt.</em></p>
 
 ### Talk
 - Chat with your companion using any model — **Ollama Cloud, OpenRouter, OpenAI, Anthropic (native), Groq, xAI**, or local models
@@ -438,6 +438,12 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.8.2** — File Limit Increase + Setup Wizard Fix
+
+- **Project file limit raised** — extracted text per file increased from 8K to 32K characters in the system prompt, and extraction cap raised from 50K to 200K characters. Large soul documents, character cards, and lore files now load fully instead of being silently truncated.
+- **Setup wizard no longer re-triggers after app updates** — previously, updating the APK could clear localStorage and force you back through setup even though your companion's data was intact. The worker now checks for existing identity data and skips setup automatically.
+- **Companion name actually persists** — the setup wizard was silently failing to save the companion name if the database row didn't exist yet (UPDATE on a missing row). Now upserts correctly.
 
 **v1.8.0** — Authentication + Security Hardening
 
