@@ -26,14 +26,28 @@ export function setActiveCompanionId(id: number): void {
   }
 }
 
+// Auth token — stored in localStorage after first-time setup or banner click
+export function getAuthToken(): string | null {
+  return localStorage.getItem('haven-auth-token');
+}
+export function saveAuthToken(token: string): void {
+  localStorage.setItem('haven-auth-token', token);
+}
+export function clearAuthToken(): void {
+  localStorage.removeItem('haven-auth-token');
+}
+
 // Builds the default headers sent on every API call. The X-Companion-Id
 // tells the worker which companion's scoped data to return (or which to
 // attribute new rows to).
 function scopedHeaders(extra?: Record<string, string>): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     'X-Companion-Id': String(activeCompanionId()),
     ...(extra || {}),
   };
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
 }
 
 async function parseJson<T>(res: Response, path: string): Promise<T> {
@@ -153,9 +167,35 @@ export async function uploadCompanionFile(
   return res.json();
 }
 
+// Auth
+export async function getAuthStatus(): Promise<{ secured: boolean }> {
+  const res = await safeFetch('/api/auth/status');
+  return parseJson(res, '/api/auth/status');
+}
+export async function generateAuthToken(): Promise<{ token: string }> {
+  const res = await safeFetch('/api/auth/generate', {
+    method: 'POST',
+    headers: scopedHeaders({ 'Content-Type': 'application/json' }),
+  });
+  return parseJson(res, '/api/auth/generate');
+}
+export async function revokeAuthToken(): Promise<void> {
+  await safeFetch('/api/auth/revoke', {
+    method: 'POST',
+    headers: scopedHeaders({ 'Content-Type': 'application/json' }),
+  });
+}
+
+function appendAuthParam(url: string): string {
+  const token = getAuthToken();
+  if (!token) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
+}
+
 // Companion export / import
 export function exportCompanionUrl(companionId: number): string {
-  return `${apiBase()}/api/companions/${companionId}/export`;
+  return appendAuthParam(`${apiBase()}/api/companions/${companionId}/export`);
 }
 export const importCompanion = (bundle: unknown) =>
   post<{ success: boolean; id: number }>('/api/companions/import', bundle);
@@ -211,11 +251,11 @@ export async function uploadFile(file: File): Promise<{ key: string; url: string
 
 // Export
 export function exportThreadUrl(threadId: string): string {
-  return `${apiBase()}/api/export/thread/${threadId}`;
+  return appendAuthParam(`${apiBase()}/api/export/thread/${threadId}`);
 }
 
 export function exportAllUrl(): string {
-  return `${apiBase()}/api/export/all`;
+  return appendAuthParam(`${apiBase()}/api/export/all`);
 }
 
 // Chat (SSE stream)

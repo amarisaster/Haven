@@ -8,6 +8,7 @@ import CompanionGrid from './components/CompanionGrid';
 import AddCompanionWizard from './components/AddCompanionWizard';
 import Settings from './pages/Settings';
 import UpdateBanner from './components/UpdateBanner';
+import SecurityBanner from './components/SecurityBanner';
 
 class SettingsErrorBoundary extends Component<{ children: ReactNode; onBack: () => void }, { error: string | null }> {
   state = { error: null as string | null };
@@ -173,6 +174,7 @@ export default function App() {
   return (
     <div style={{ height: '100%', background: 'var(--haven-bg)' }}>
       <UpdateBanner />
+      <SecurityBanner />
 
       {/* Companion grid (home) — v1.7 multi-companion landing */}
       {view === 'grid' && (

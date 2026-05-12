@@ -5,7 +5,7 @@
 import { useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { autoDetectAndParse, isNexusChatMarkdown, parseNexusChatMarkdown, type ImportResult } from '../lib/importers';
-import { createThread, updateCompanion, addIdentity, apiBase, importCompanion, setActiveCompanionId } from '../lib/api';
+import { createThread, updateCompanion, addIdentity, apiBase, importCompanion, setActiveCompanionId, getAuthToken } from '../lib/api';
 
 interface ImportWizardProps {
   onClose: () => void;
@@ -191,9 +191,12 @@ export default function ImportWizard({ onClose, onComplete }: ImportWizardProps)
         if (created?.id) {
           // Save messages via direct API
           for (const msg of thread.messages) {
+            const importHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+            const _t = getAuthToken();
+            if (_t) importHeaders['Authorization'] = `Bearer ${_t}`;
             await fetch(`${apiBase()}/api/import/message`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: importHeaders,
               body: JSON.stringify({
                 thread_id: created.id,
                 role: msg.role,

@@ -10,19 +10,34 @@ interface Env {
   OLLAMA_URL?: string;
 }
 
-// CORS headers
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Companion-Id',
-};
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin') || '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Companion-Id, Authorization',
+    'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
+  };
+}
+
+let _cors: Record<string, string> = {};
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    headers: { 'Content-Type': 'application/json', ..._cors },
   });
 }
+
+// Auth token cache — avoids D1 read on every request
+let _authToken: string | null | undefined = undefined;
+async function getAuthToken(db: D1Database): Promise<string | null> {
+  if (_authToken !== undefined) return _authToken;
+  _authToken = await getSettingValue(db, 'auth_token') || null;
+  return _authToken;
+}
+function invalidateAuthTokenCache() { _authToken = undefined; }
 
 async function ensureReactionsColumn(db: D1Database) {
   try { await db.prepare("ALTER TABLE messages ADD COLUMN reactions TEXT").run(); } catch { /* already exists */ }
@@ -1115,8 +1130,10 @@ async function ensureMigrations(db: D1Database): Promise<void> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    _cors = getCorsHeaders(request);
+
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
+      return new Response(null, { headers: _cors });
     }
 
     // Run migrations once per worker instance (idempotent, fast after first
@@ -1127,6 +1144,49 @@ export default {
     const path = url.pathname;
 
     try {
+      // ---- Auth routes (exempt from auth check) ----
+      if (path === '/api/auth/status') {
+        const token = await getAuthToken(env.DB);
+        return json({ secured: !!token });
+      }
+
+      if (path === '/api/auth/generate' && request.method === 'POST') {
+        const existing = await getAuthToken(env.DB);
+        if (existing) {
+          const bearer = request.headers.get('Authorization')?.replace('Bearer ', '');
+          const qToken = url.searchParams.get('token');
+          if ((bearer || qToken) !== existing) return json({ error: 'Unauthorized' }, 401);
+        }
+        const token = crypto.randomUUID() + '-' + crypto.randomUUID();
+        await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('auth_token', token).run();
+        invalidateAuthTokenCache();
+        return json({ token });
+      }
+
+      if (path === '/api/auth/revoke' && request.method === 'POST') {
+        const existing = await getAuthToken(env.DB);
+        if (existing) {
+          const bearer = request.headers.get('Authorization')?.replace('Bearer ', '');
+          if (bearer !== existing) return json({ error: 'Unauthorized' }, 401);
+        }
+        await env.DB.prepare('DELETE FROM settings WHERE key = ?').bind('auth_token').run();
+        invalidateAuthTokenCache();
+        return json({ success: true });
+      }
+
+      // ---- Auth middleware ----
+      const storedToken = await getAuthToken(env.DB);
+      if (storedToken) {
+        const isExempt = path === '/' || path === '/health';
+        if (!isExempt) {
+          const bearer = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
+          const qToken = url.searchParams.get('token');
+          if ((bearer || qToken) !== storedToken) {
+            return json({ error: 'Unauthorized' }, 401);
+          }
+        }
+      }
+
       // ---- Health ----
       if (path === '/' || path === '/health') {
         const hasOR = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
@@ -1396,7 +1456,7 @@ export default {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            ...corsHeaders,
+            ..._cors,
           },
         });
       }
@@ -1613,7 +1673,7 @@ export default {
               headers: {
                 'Content-Type': 'application/json',
                 'Content-Disposition': `attachment; filename="companion-${c.name.replace(/[^a-z0-9]/gi, '-')}.json"`,
-                ...corsHeaders,
+                ..._cors,
               },
             });
           }
@@ -2054,7 +2114,7 @@ export default {
           headers: {
             'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
             'Cache-Control': 'public, max-age=86400',
-            ...corsHeaders,
+            ..._cors,
           },
         });
       }
@@ -2090,7 +2150,7 @@ export default {
           headers: {
             'Content-Type': 'application/json',
             'Content-Disposition': `attachment; filename="haven-${threadId.slice(0, 8)}.json"`,
-            ...corsHeaders,
+            ..._cors,
           },
         });
       }
@@ -2135,7 +2195,7 @@ export default {
           headers: {
             'Content-Type': 'application/json',
             'Content-Disposition': `attachment; filename="haven-export-${new Date().toISOString().split('T')[0]}.json"`,
-            ...corsHeaders,
+            ..._cors,
           },
         });
       }

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.7.4-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.8.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -438,6 +438,19 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.8.0** — Authentication + Security Hardening
+
+Security-focused release. Haven instances are no longer open by default.
+
+- **Auth token system** — Haven now supports an auto-generated auth token that locks your Worker API. All `/api/*` routes require a Bearer token once enabled. Tokens are stored in D1 and cached per-worker for zero-latency checks.
+- **One-click secure** — existing users see a banner prompting them to secure their Haven with a single tap. No terminal commands, no config files. The token is generated, saved to the database and your browser automatically.
+- **Setup wizard security step** — new installs get a "Secure your Haven" step at the end of setup. Generates a key you can copy for use on other devices.
+- **Settings Security section** — view, copy, regenerate, or revoke your auth key from Settings. Status indicator shows whether your Haven is secured.
+- **Multi-device support** — if you open Haven from a new browser, you'll see a prompt to paste your key. No data loss, no lockout.
+- **CORS hardening** — wildcard `Access-Control-Allow-Origin: *` replaced with dynamic origin reflection. `Authorization` header now allowed in CORS preflight. Responses include `Vary: Origin` for correct cache behavior.
+- **Authenticated file access** — R2 file URLs (images, video, audio) and export/download links use a `?token=` query parameter fallback so `<img>` and `<a>` tags work without JavaScript header injection.
+- **Backwards compatible** — no token in the database means unsecured mode. Existing installs keep working unchanged until the user chooses to secure. Nothing breaks on upgrade.
 
 **v1.7.4** — APK Stability + Android Fixes
 

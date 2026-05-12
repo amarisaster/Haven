@@ -1,6 +1,15 @@
 import { useState, useRef } from 'react';
 import type { Message } from '../lib/types';
 import { speak, stop } from '../lib/tts';
+import { getAuthToken, apiBase } from '../lib/api';
+
+function authUrl(url: string): string {
+  const token = getAuthToken();
+  const base = apiBase();
+  if (!token || !base || !url.startsWith(base)) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
+}
 
 interface MessageBubbleProps {
   message: Message;
@@ -201,7 +210,7 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string): React.Reac
         return (
           <img
             key={k}
-            src={part.url}
+            src={authUrl(part.url)}
             alt=""
             style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
             loading="lazy"
@@ -212,7 +221,7 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string): React.Reac
         return (
           <video
             key={k}
-            src={part.url}
+            src={authUrl(part.url)}
             controls
             preload="metadata"
             style={{ maxWidth: '320px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
@@ -222,7 +231,7 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string): React.Reac
         return (
           <audio
             key={k}
-            src={part.url}
+            src={authUrl(part.url)}
             controls
             preload="metadata"
             style={{ maxWidth: '100%', marginTop: '8px', display: 'block' }}
@@ -426,7 +435,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               )}
               {renderContentParts(parsedParts, `m-${message.id}`)}
               {message.image && (
-                <img src={message.image} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                <img src={authUrl(message.image)} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               )}
               {isStreaming && !message.content && (
                 // Typing indicator — shown while waiting for the first token

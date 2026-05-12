@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { updateCompanion, updateSettings, addIdentity, apiBase } from '../lib/api';
+import { updateCompanion, updateSettings, addIdentity, apiBase, generateAuthToken, saveAuthToken } from '../lib/api';
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -17,6 +17,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [description, setDescription] = useState('');
   const [descFile, setDescFile] = useState('');
   const [appearance, setAppearance] = useState('');
+  const [securityToken, setSecurityToken] = useState('');
+  const [securityCopied, setSecurityCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -60,6 +62,20 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   };
 
   const detected = apiKey.trim() ? detectProvider(apiKey) : null;
+
+  const handleGenerateToken = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const { token } = await generateAuthToken();
+      saveAuthToken(token);
+      setSecurityToken(token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate key');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleFinish = async () => {
     if (!name.trim()) { setError('Please enter a name'); return; }
@@ -198,7 +214,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           await addIdentity({ content: appearance.trim(), identity_type: 'dynamic', priority: 8 });
         }
       }
-      onComplete();
+      setStep(6);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
@@ -507,7 +523,77 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   fontSize: '14px', fontWeight: 600, cursor: saving ? 'default' : 'pointer',
                   opacity: saving ? 0.7 : 1,
                 }}
-              >{saving ? 'Setting up...' : 'Finish'}</button>
+              >{saving ? 'Setting up...' : 'Next'}</button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 6: Security */}
+        {step === 6 && (
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px', textAlign: 'center' }}>
+              Secure your Haven
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--haven-text-muted)', textAlign: 'center', marginBottom: '24px' }}>
+              This generates a secret key so only you can access {name || 'your companion'}'s data. Save it somewhere safe for connecting from other devices.
+            </p>
+            {securityToken ? (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{
+                  background: 'var(--haven-card)', border: '1px solid var(--haven-border)',
+                  borderRadius: '10px', padding: '16px', marginBottom: '16px',
+                  fontFamily: 'monospace', fontSize: '12px', color: 'var(--haven-text)',
+                  wordBreak: 'break-all', lineHeight: 1.6,
+                }}>{securityToken}</div>
+                <button
+                  onClick={() => { navigator.clipboard.writeText(securityToken); setSecurityCopied(true); setTimeout(() => setSecurityCopied(false), 2000); }}
+                  style={{
+                    padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--haven-border)',
+                    background: 'transparent', color: 'var(--haven-text-secondary)',
+                    fontSize: '13px', cursor: 'pointer', marginBottom: '20px',
+                  }}
+                >{securityCopied ? 'Copied!' : 'Copy key'}</button>
+                <p style={{ fontSize: '12px', color: 'var(--haven-text-muted)', marginBottom: '20px' }}>
+                  This key is saved automatically in this browser. You'll only need it to connect from a new device.
+                </p>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                <button
+                  onClick={handleGenerateToken}
+                  disabled={saving}
+                  style={{
+                    padding: '12px 32px', borderRadius: '10px', border: 'none',
+                    background: 'var(--haven-accent)', color: 'white',
+                    fontSize: '14px', fontWeight: 600, cursor: saving ? 'default' : 'pointer',
+                    opacity: saving ? 0.7 : 1,
+                  }}
+                >{saving ? 'Generating...' : 'Generate key'}</button>
+              </div>
+            )}
+            {error && (
+              <p style={{ color: '#f87171', fontSize: '12px', marginTop: '8px', textAlign: 'center' }}>{error}</p>
+            )}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
+              <button
+                onClick={onComplete}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: '10px',
+                  border: '1px solid var(--haven-border)', background: 'transparent',
+                  color: 'var(--haven-text-secondary)', fontSize: '14px', cursor: 'pointer',
+                }}
+              >Skip</button>
+              <button
+                onClick={onComplete}
+                disabled={!securityToken}
+                style={{
+                  flex: 2, padding: '12px', borderRadius: '10px', border: 'none',
+                  background: 'var(--haven-accent)', color: 'white',
+                  fontSize: '14px', fontWeight: 600,
+                  cursor: securityToken ? 'pointer' : 'default',
+                  opacity: securityToken ? 1 : 0.5,
+                }}
+              >Finish</button>
             </div>
           </div>
         )}

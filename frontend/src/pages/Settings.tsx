@@ -7,6 +7,7 @@ import {
   uploadFile, getUserStatus, setUserStatus, apiBase,
   archiveCompanion, setActiveCompanionId, activeCompanionId,
   exportCompanionUrl, getStorageUsage, clearChatFiles,
+  getAuthStatus, generateAuthToken, saveAuthToken, getAuthToken, clearAuthToken, revokeAuthToken,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -326,6 +327,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           </button>
         </div>
       </div>
+
+      {/* Security */}
+      <SecuritySection sectionStyle={sectionStyle} btnStyle={btnStyle} />
 
       {/* Your Profile & Status */}
       <div style={sectionStyle}>
@@ -974,6 +978,118 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 }
 
 // ============================================================
+// Security Section
+// ============================================================
+
+function SecuritySection({ sectionStyle, btnStyle }: { sectionStyle: React.CSSProperties; btnStyle: React.CSSProperties }) {
+  const [secured, setSecured] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+
+  useEffect(() => {
+    getAuthStatus().then(s => setSecured(s.secured)).catch(() => setSecured(null));
+  }, []);
+
+  if (secured === null) return null;
+
+  const token = getAuthToken();
+  const masked = token ? `${token.slice(0, 8)}...${token.slice(-8)}` : '';
+
+  const handleSecure = async () => {
+    setBusy(true);
+    try {
+      const { token: t } = await generateAuthToken();
+      saveAuthToken(t);
+      setSecured(true);
+    } catch { /* banner handles this */ }
+    setBusy(false);
+  };
+
+  const handleRegenerate = async () => {
+    setBusy(true);
+    try {
+      const { token: t } = await generateAuthToken();
+      saveAuthToken(t);
+    } catch { /* */ }
+    setBusy(false);
+  };
+
+  const handleCopy = () => {
+    if (token) navigator.clipboard.writeText(token);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRevoke = async () => {
+    setBusy(true);
+    try {
+      await revokeAuthToken();
+      clearAuthToken();
+      setSecured(false);
+      setConfirmRevoke(false);
+    } catch { /* */ }
+    setBusy(false);
+  };
+
+  return (
+    <div style={sectionStyle}>
+      <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>Security</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: secured ? '#22c55e' : '#ef4444',
+          display: 'inline-block', flexShrink: 0,
+        }} />
+        <span style={{ fontSize: '13px', color: 'var(--haven-text-secondary)' }}>
+          {secured ? 'Secured with auth token' : 'Unsecured — anyone with your Worker URL can access your data'}
+        </span>
+      </div>
+
+      {!secured && (
+        <button onClick={handleSecure} disabled={busy} style={{ ...btnStyle, background: 'var(--haven-accent)', color: 'white', border: 'none' }}>
+          {busy ? 'Securing...' : 'Secure Haven'}
+        </button>
+      )}
+
+      {secured && token && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <code style={{
+              fontSize: '12px', color: 'var(--haven-text-muted)',
+              background: 'var(--haven-card)', padding: '4px 8px', borderRadius: 4,
+              cursor: 'pointer',
+            }} onClick={() => setShowToken(!showToken)}>
+              {showToken ? token : masked}
+            </code>
+            <button onClick={handleCopy} style={{ ...btnStyle, fontSize: '12px', padding: '4px 10px' }}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={handleRegenerate} disabled={busy} style={btnStyle}>
+              {busy ? 'Regenerating...' : 'Regenerate key'}
+            </button>
+            {!confirmRevoke ? (
+              <button onClick={() => setConfirmRevoke(true)} style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef4444' }}>
+                Remove security
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: '#ef4444' }}>Are you sure?</span>
+                <button onClick={handleRevoke} disabled={busy} style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef4444' }}>Yes, remove</button>
+                <button onClick={() => setConfirmRevoke(false)} style={btnStyle}>Cancel</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // MCP Servers Section
 // ============================================================
 
@@ -988,9 +1104,14 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
   const [discoverError, setDiscoverError] = useState<Record<number, string>>({});
   const [expanded, setExpanded] = useState(false);
 
+  const authHeaders = (): Record<string, string> => {
+    const t = getAuthToken();
+    return t ? { 'Authorization': `Bearer ${t}` } : {};
+  };
+
   const loadServers = async () => {
     try {
-      const resp = await fetch(`${apiUrl}/api/mcp-servers`);
+      const resp = await fetch(`${apiUrl}/api/mcp-servers`, { headers: authHeaders() });
       if (resp.ok) setServers(await resp.json());
     } catch {}
   };
@@ -1003,7 +1124,7 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
     try {
       await fetch(`${apiUrl}/api/mcp-servers`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ name: name.trim(), url: url.trim(), api_key: key.trim() || null }),
       });
       setName(''); setUrl(''); setKey('');
@@ -1012,12 +1133,12 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
   };
 
   const handleDelete = async (id: number) => {
-    await fetch(`${apiUrl}/api/mcp-servers/${id}`, { method: 'DELETE' });
+    await fetch(`${apiUrl}/api/mcp-servers/${id}`, { method: 'DELETE', headers: authHeaders() });
     loadServers();
   };
 
   const handleToggle = async (id: number) => {
-    await fetch(`${apiUrl}/api/mcp-servers/${id}/toggle`, { method: 'PUT' });
+    await fetch(`${apiUrl}/api/mcp-servers/${id}/toggle`, { method: 'PUT', headers: authHeaders() });
     loadServers();
   };
 
@@ -1027,7 +1148,7 @@ function McpServersSection({ apiUrl }: { apiUrl: string }) {
     try {
       const resp = await fetch(`${apiUrl}/api/mcp-servers/discover`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ id }),
       });
       const data = await resp.json().catch(() => ({}));
