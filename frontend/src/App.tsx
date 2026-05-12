@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Component, type ReactNode } from 'react';
 import { getCompanion, setActiveCompanionId, activeCompanionId } from './lib/api';
 import ThreadList from './components/ThreadList';
 import ChatContainer from './components/ChatContainer';
@@ -8,6 +8,23 @@ import CompanionGrid from './components/CompanionGrid';
 import AddCompanionWizard from './components/AddCompanionWizard';
 import Settings from './pages/Settings';
 import UpdateBanner from './components/UpdateBanner';
+
+class SettingsErrorBoundary extends Component<{ children: ReactNode; onBack: () => void }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(err: Error) { return { error: err.message }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: '40px 20px', color: '#fafaf9', textAlign: 'center' }}>
+          <p style={{ fontSize: '16px', marginBottom: '12px' }}>Settings failed to load</p>
+          <p style={{ fontSize: '12px', color: '#a8a29e', marginBottom: '20px' }}>{this.state.error}</p>
+          <button onClick={this.props.onBack} style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#d4748a', color: 'white', fontSize: '14px' }}>Back</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type View = 'grid' | 'threads' | 'chat' | 'settings';
 
@@ -194,7 +211,9 @@ export default function App() {
 
       {/* Settings */}
       {view === 'settings' && (
-        <Settings onImport={() => setShowImport(true)} onBack={goBack} />
+        <SettingsErrorBoundary onBack={goBack}>
+          <Settings onImport={() => setShowImport(true)} onBack={goBack} />
+        </SettingsErrorBoundary>
       )}
 
       {/* Import Wizard */}
