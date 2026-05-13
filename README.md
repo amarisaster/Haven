@@ -439,10 +439,13 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 
 ## Recent updates
 
-**v1.8.2** — File Limit Increase + Setup Wizard Fix
+**v1.8.2** — Stability + Crash Fixes
 
+- **Black screen fix** — API errors (401, 500, network failures) no longer crash the entire app. Previously, a single failed request could kill the React tree with no recovery. Added a global error boundary with Reload and Reset buttons so you always see what went wrong instead of a blank screen.
+- **Disappearing messages fix** — sending a message on a new conversation no longer aborts the chat stream mid-response. A race condition between thread creation and message loading was silently killing the companion's reply and sometimes wiping the user's message.
+- **Silent model failure fix** — if the model doesn't respond (timeout, connection drop, provider error), the app now shows an error message instead of silently doing nothing. Previously the streaming indicator would vanish with no feedback.
+- **Setup wizard no longer re-triggers for existing users** — the worker now checks for existing threads (not just identity data) when deciding whether to show the setup wizard. Switching browsers, clearing cache, or redeploying to a new Pages URL no longer forces you through setup again.
 - **Project file limit raised** — extracted text per file increased from 8K to 32K characters in the system prompt, and extraction cap raised from 50K to 200K characters. Large soul documents, character cards, and lore files now load fully instead of being silently truncated.
-- **Setup wizard no longer re-triggers after app updates** — previously, updating the APK could clear localStorage and force you back through setup even though your companion's data was intact. The worker now checks for existing identity data and skips setup automatically.
 - **Companion name actually persists** — the setup wizard was silently failing to save the companion name if the database row didn't exist yet (UPDATE on a missing row). Now upserts correctly.
 
 **v1.8.0** — Authentication + Security Hardening
