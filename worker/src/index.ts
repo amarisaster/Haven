@@ -1557,10 +1557,13 @@ export default {
       // ---- Companion (singular — v1.6 compat, operates on the active companion) ----
       if (path === '/api/companion' && request.method === 'GET') {
         const cid = getCompanionId(request);
-        const companion = await env.DB.prepare('SELECT * FROM companion WHERE id = ?').bind(cid).first();
-        const identityCount = await env.DB.prepare('SELECT COUNT(*) as cnt FROM identity WHERE companion_id = ?').bind(cid).first<{ cnt: number }>();
+        const [companion, identityCount, threadCount] = await Promise.all([
+          env.DB.prepare('SELECT * FROM companion WHERE id = ?').bind(cid).first(),
+          env.DB.prepare('SELECT COUNT(*) as cnt FROM identity WHERE companion_id = ?').bind(cid).first<{ cnt: number }>(),
+          env.DB.prepare('SELECT COUNT(*) as cnt FROM threads WHERE companion_id = ?').bind(cid).first<{ cnt: number }>(),
+        ]);
         const base = companion || { id: cid, name: 'Companion' };
-        return json({ ...base, has_identity: (identityCount?.cnt ?? 0) > 0 });
+        return json({ ...base, has_identity: (identityCount?.cnt ?? 0) > 0, has_threads: (threadCount?.cnt ?? 0) > 0 });
       }
 
       if (path === '/api/companion' && request.method === 'PUT') {

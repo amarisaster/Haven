@@ -10,6 +10,26 @@ import Settings from './pages/Settings';
 import UpdateBanner from './components/UpdateBanner';
 import SecurityBanner from './components/SecurityBanner';
 
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(err: Error) { return { error: err.message }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#0c0a09', color: '#fafaf9', padding: '40px 20px', textAlign: 'center' }}>
+          <p style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>Something went wrong</p>
+          <p style={{ fontSize: '13px', color: '#a8a29e', marginBottom: '24px', maxWidth: '400px' }}>{this.state.error}</p>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button onClick={() => window.location.reload()} style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#d4748a', color: 'white', fontSize: '14px', cursor: 'pointer' }}>Reload</button>
+            <button onClick={() => { localStorage.removeItem('haven-view'); localStorage.removeItem('haven-active-thread'); window.location.reload(); }} style={{ padding: '10px 24px', borderRadius: '8px', border: '1px solid #3f3f46', background: 'transparent', color: '#a8a29e', fontSize: '14px', cursor: 'pointer' }}>Reset view</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 class SettingsErrorBoundary extends Component<{ children: ReactNode; onBack: () => void }, { error: string | null }> {
   state = { error: null as string | null };
   static getDerivedStateFromError(err: Error) { return { error: err.message }; }
@@ -65,7 +85,7 @@ export default function App() {
       setCompanionName(c.name || '');
       setCompanionAvatar(c.avatar_url || '');
       const hasRealName = c.name && c.name !== 'Companion';
-      if (hasRealName || c.has_identity) {
+      if (hasRealName || c.has_identity || c.has_threads) {
         localStorage.setItem('haven-setup-done', 'true');
       } else if (!localStorage.getItem('haven-setup-done')) {
         setNeedsSetup(true);
@@ -173,10 +193,11 @@ export default function App() {
   }
 
   if (needsSetup) {
-    return <SetupWizard onComplete={handleSetupComplete} />;
+    return <AppErrorBoundary><SetupWizard onComplete={handleSetupComplete} /></AppErrorBoundary>;
   }
 
   return (
+    <AppErrorBoundary>
     <div style={{ height: '100%', background: 'var(--haven-bg)' }}>
       <UpdateBanner />
       <SecurityBanner />
@@ -239,5 +260,6 @@ export default function App() {
         />
       )}
     </div>
+    </AppErrorBoundary>
   );
 }

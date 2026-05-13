@@ -68,7 +68,7 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
 
   useEffect(() => {
     getModels()
-      .then((m) => { setModels(m); setLoadState('ready'); })
+      .then((m) => { setModels(Array.isArray(m) ? m : []); setLoadState('ready'); })
       .catch((e) => { console.warn('[models] load failed', e); setLoadState('error'); });
   }, []);
 

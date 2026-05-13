@@ -49,7 +49,7 @@ export default function ThreadList({
   const loadThreads = async () => {
     try {
       const data = await getThreads();
-      setThreads(data);
+      setThreads(Array.isArray(data) ? data : []);
     } catch {} finally {
       setLoading(false);
     }

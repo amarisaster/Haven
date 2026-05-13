@@ -19,7 +19,7 @@ export default function CompanionSwitcher({ activeId, onSwitch, onBackToGrid }: 
   useEffect(() => {
     let active = true;
     listCompanions()
-      .then(rows => { if (active) setCompanions(rows); })
+      .then(rows => { if (active) setCompanions(Array.isArray(rows) ? rows : []); })
       .catch(() => { /* keep empty — strip just won't render */ });
     return () => { active = false; };
   }, []);

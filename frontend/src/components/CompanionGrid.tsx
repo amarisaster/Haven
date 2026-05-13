@@ -22,7 +22,7 @@ export default function CompanionGrid({ onOpenCompanion, onAddCompanion, onOpenS
     listCompanions()
       .then(rows => {
         if (!active) return;
-        setCompanions(rows);
+        setCompanions(Array.isArray(rows) ? rows : []);
         setLoading(false);
       })
       .catch(e => {

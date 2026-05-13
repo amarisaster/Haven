@@ -40,6 +40,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [userStatus, setUserStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const abortRef = useRef<AbortController | null>(null);
+  const sendingRef = useRef(false);
 
   // Poll companion + user status from D1 (both live server-side so they stay
   // consistent across devices / sessions).
@@ -59,8 +60,11 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     return () => { active = false; clearInterval(interval); };
   }, []);
 
-  // Load messages when thread changes; abort any in-flight stream
+  // Load messages when thread changes. Skip if a send is in progress —
+  // new-thread creation updates threadId mid-stream and we must not abort
+  // the active chat or replace the optimistic messages.
   useEffect(() => {
+    if (sendingRef.current) return;
     if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
     setStreamingContent(null);
     if (!threadId) {
@@ -70,7 +74,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     setIsLoading(true);
     setError(null);
     getMessages(threadId)
-      .then(setMessages)
+      .then(data => setMessages(Array.isArray(data) ? data : []))
       .catch((err) => setError(err.message))
       .finally(() => setIsLoading(false));
   }, [threadId]);
@@ -95,6 +99,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    sendingRef.current = true;
 
     // Fold the <file>...</file> block into the persisted content so reloads
     // keep the file attached to the conversation and MessageBubble can
@@ -192,9 +197,10 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         }
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (err instanceof DOMException && err.name === 'AbortError') { sendingRef.current = false; return; }
       setError(err instanceof Error ? err.message : 'Failed to send message');
     }
+    sendingRef.current = false;
 
     // Swap the optimistic user temp-id for the D1 UUID so delete/react/edit
     // hit the right row. Done in a single setMessages to avoid two renders.
@@ -204,17 +210,9 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       ));
     }
 
-    // Finalize: add companion message if ANY of — text content, tool calls,
-    // or a notice — arrived. Previously we only added the bubble when
-    // fullContent was truthy, which silently dropped tool-only responses
-    // (model fires MCP tools without a follow-up text reply → empty
-    // content → nothing renders).
     setStreamingContent(null);
     if (fullContent || toolCalls.length > 0 || notice) {
       const companionMsg: Message = {
-        // Prefer the D1 UUID when the worker sent it (delete/react/edit
-        // work immediately). Fall back to a local id for optimistic display
-        // if the complete event arrived malformed.
         id: realCompanionId || `comp-${Date.now()}`,
         thread_id: currentThreadId || '',
         role: 'companion',
@@ -226,6 +224,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       };
       setMessages((prev) => [...prev, companionMsg]);
       if (fullContent) notifyCompanionMessage(companionName, fullContent);
+    } else if (!error) {
+      setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
     }
   }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking]);
 
@@ -307,6 +307,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       };
       setMessages((prev) => [...prev, companionMsg]);
       if (fullContent) notifyCompanionMessage(companionName, fullContent);
+    } else if (!error) {
+      setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
     }
   }, [messages, threadId, selectedModel, selectedProvider, thinking]);
 

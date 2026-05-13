@@ -42,7 +42,8 @@ export default function FilesPanel({ companionId }: FilesPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      setFiles(await listCompanionFiles(companionId));
+      const data = await listCompanionFiles(companionId);
+      setFiles(Array.isArray(data) ? data : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load files');
     } finally {

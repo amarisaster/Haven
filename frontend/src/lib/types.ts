@@ -31,6 +31,7 @@ export interface Companion {
   archived_at?: string | null;
   created_at: string;
   has_identity?: boolean;
+  has_threads?: boolean;
 }
 
 export interface CompanionFile {

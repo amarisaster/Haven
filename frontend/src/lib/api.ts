@@ -52,8 +52,9 @@ function scopedHeaders(extra?: Record<string, string>): Record<string, string> {
 
 async function parseJson<T>(res: Response, path: string): Promise<T> {
   const text = await res.text();
+  let parsed: any;
   try {
-    return JSON.parse(text) as T;
+    parsed = JSON.parse(text);
   } catch {
     const head = text.trimStart().slice(0, 20).toLowerCase();
     if (head.startsWith('<!doctype') || head.startsWith('<html')) {
@@ -64,6 +65,10 @@ async function parseJson<T>(res: Response, path: string): Promise<T> {
     }
     throw new Error(`Invalid JSON response from ${path}`);
   }
+  if (!res.ok) {
+    throw new Error(parsed?.error || `Request failed (${res.status}) for ${path}`);
+  }
+  return parsed as T;
 }
 
 async function safeFetch(path: string, init?: RequestInit): Promise<Response> {
