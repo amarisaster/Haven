@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.8.2-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.8.3-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -438,6 +438,11 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.8.3** — APK Auth Fixes
+
+- **Stale token recovery** — if your auth token becomes invalid (revoked from another device, expired, corrupted), Haven now detects the 401 and re-prompts you to enter your key. Previously, a bad token locked you out with no recovery path.
+- **Native storage for critical data** — auth token, Worker URL, setup flag, and active companion ID are now stored in Android's native Preferences (via Capacitor). These survive app force-closes and Android memory cleanups. No more losing your setup when the OS kills the app.
 
 **v1.8.2** — Stability + Crash Fixes
 
