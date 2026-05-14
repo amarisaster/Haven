@@ -19,6 +19,12 @@ export default function SecurityBanner() {
       .catch(() => setState('hidden'));
   }, []);
 
+  useEffect(() => {
+    const onExpired = () => setState('need-token');
+    window.addEventListener('haven-auth-expired', onExpired);
+    return () => window.removeEventListener('haven-auth-expired', onExpired);
+  }, []);
+
   if (state === 'loading' || state === 'secured' || state === 'hidden') return null;
 
   const handleSecure = async () => {

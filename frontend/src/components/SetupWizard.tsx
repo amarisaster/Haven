@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { updateCompanion, updateSettings, addIdentity, apiBase, generateAuthToken, saveAuthToken } from '../lib/api';
+import { persistSet } from '../lib/storage';
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -38,7 +39,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
         setError("That URL didn't return JSON — double-check it points at your Haven Worker.");
         return;
       }
-      localStorage.setItem('haven-api-url', raw);
+      persistSet('haven-api-url', raw);
       setWorkerUrl(raw);
       setStep(2);
     } catch (e) {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, Component, type ReactNode } from 'react';
 import { getCompanion, setActiveCompanionId, activeCompanionId } from './lib/api';
+import { persistSet } from './lib/storage';
 import ThreadList from './components/ThreadList';
 import ChatContainer from './components/ChatContainer';
 import SetupWizard from './components/SetupWizard';
@@ -86,7 +87,7 @@ export default function App() {
       setCompanionAvatar(c.avatar_url || '');
       const hasRealName = c.name && c.name !== 'Companion';
       if (hasRealName || c.has_identity || c.has_threads) {
-        localStorage.setItem('haven-setup-done', 'true');
+        persistSet('haven-setup-done', 'true');
       } else if (!localStorage.getItem('haven-setup-done')) {
         setNeedsSetup(true);
       }
@@ -166,7 +167,7 @@ export default function App() {
   }, []);
 
   const handleSetupComplete = useCallback(() => {
-    localStorage.setItem('haven-setup-done', '1');
+    persistSet('haven-setup-done', '1');
     setNeedsSetup(false);
     getCompanion()
       .then((c) => {

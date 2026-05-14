@@ -3,11 +3,13 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { initNotifications } from './lib/notifications';
+import { syncFromNativeStorage } from './lib/storage';
 
-initNotifications();
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+syncFromNativeStorage().then(() => {
+  initNotifications();
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+});

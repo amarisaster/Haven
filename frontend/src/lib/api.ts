@@ -3,6 +3,7 @@
  */
 
 import type { Thread, Message, Companion, CompanionFile, Identity, ModelInfo } from './types';
+import { persistSet, persistRemove } from './storage';
 
 // Resolved per-call so SetupWizard/Settings changes to localStorage take effect
 // without a page reload. On native APKs this is the only way the user can
@@ -22,7 +23,7 @@ export function activeCompanionId(): number {
 
 export function setActiveCompanionId(id: number): void {
   if (Number.isFinite(id) && id > 0) {
-    localStorage.setItem('haven-active-companion-id', String(id));
+    persistSet('haven-active-companion-id', String(id));
   }
 }
 
@@ -31,10 +32,10 @@ export function getAuthToken(): string | null {
   return localStorage.getItem('haven-auth-token');
 }
 export function saveAuthToken(token: string): void {
-  localStorage.setItem('haven-auth-token', token);
+  persistSet('haven-auth-token', token);
 }
 export function clearAuthToken(): void {
-  localStorage.removeItem('haven-auth-token');
+  persistRemove('haven-auth-token');
 }
 
 // Builds the default headers sent on every API call. The X-Companion-Id
@@ -66,6 +67,10 @@ async function parseJson<T>(res: Response, path: string): Promise<T> {
     throw new Error(`Invalid JSON response from ${path}`);
   }
   if (!res.ok) {
+    if (res.status === 401) {
+      clearAuthToken();
+      window.dispatchEvent(new Event('haven-auth-expired'));
+    }
     throw new Error(parsed?.error || `Request failed (${res.status}) for ${path}`);
   }
   return parsed as T;
