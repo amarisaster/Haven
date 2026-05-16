@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.8.4-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.9.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -497,6 +497,16 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**v1.9.0** — Production Ready
+
+- **Rate limiting** — chat (30/min), uploads (10/min), and auth generation (5/min) are now rate-limited per IP. Returns 429 with `Retry-After` header when exceeded.
+- **Auth token no longer in URLs** — media files and exports now use `Authorization: Bearer` header via fetch + blob URLs. Tokens no longer leak to browser history, server logs, or Referer headers.
+- **Worker CI/CD** — new GitHub Actions workflow auto-deploys the worker on push to `worker/`. Set `CLOUDFLARE_API_TOKEN` in your fork's secrets to enable.
+- **Automated tests** — 20 tests covering version comparison, error handling, array safety guards, and CORS validation. Run with `npm test` in the frontend directory.
+- **Full D1 backup/restore** — `GET /api/export/all` now includes settings and MCP server configs (auth tokens excluded). `POST /api/import/full` restores an entire Haven from a backup JSON — companions, threads, messages, memories, identity, settings, MCP servers.
+- **Expanded setup docs** — Getting Started now walks through D1 database creation, schema seeding, and wrangler.toml configuration step by step.
+- **More troubleshooting** — added entries for black screen, APK data loss, silent model failures, disappearing messages, rate limits, and D1 setup errors.
 
 **v1.8.4** — Security Hardening
 
