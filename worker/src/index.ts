@@ -862,13 +862,8 @@ async function resolveProviderConfig(provider: string, db: D1Database, env: Env)
   }
   const endpoint = PROVIDER_ENDPOINTS[provider];
   if (endpoint) {
-    const key = await getSettingValue(db, endpoint.keyField) || await getSettingValue(db, 'custom_key');
+    const key = await getSettingValue(db, endpoint.keyField);
     return { url: endpoint.url, key, format: endpoint.format };
-  }
-  const customKey = await getSettingValue(db, 'custom_key');
-  const customUrl = await getSettingValue(db, 'custom_base_url');
-  if (customKey && customUrl) {
-    return { url: customUrl, key: customKey, format: 'openai' };
   }
   const orKey = env.OPENROUTER_API_KEY || await getSettingValue(db, 'openrouter_key');
   return { url: 'https://openrouter.ai/api/v1', key: orKey, format: 'openai' };
