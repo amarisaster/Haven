@@ -227,7 +227,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
         <input ref={fileRef} type="file" accept="image/*,application/pdf,.docx,.epub,text/plain,.md,.txt,audio/*,video/*" onChange={handleFileUpload} className="hidden" />
 
         {/* + button with attachment menu */}
-        <div style={{ position: 'relative', flexShrink: 0 }}>
+        <div style={{ position: 'relative', flexShrink: 0, alignSelf: 'center' }}>
           <button
             onClick={() => setShowAttachMenu(!showAttachMenu)}
             style={{
