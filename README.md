@@ -144,7 +144,10 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 
 ## Getting started
 
-You'll need a [Cloudflare account](https://dash.cloudflare.com/sign-up) (free) and [Node.js](https://nodejs.org/) installed.
+You'll need:
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
+- [Node.js](https://nodejs.org/) v20+ installed
+- A terminal (PowerShell, Terminal, or bash)
 
 ### 1. Clone the repo
 
@@ -153,32 +156,62 @@ git clone https://github.com/amarisaster/Haven.git
 cd Haven
 ```
 
-### 2. Set up the worker (backend)
+### 2. Install Wrangler (Cloudflare CLI)
+
+```bash
+npm install -g wrangler
+wrangler login
+```
+
+This opens your browser to authorize Wrangler with your Cloudflare account.
+
+### 3. Create the database
 
 ```bash
 cd worker
+wrangler d1 create haven-db
+```
+
+This prints a database ID like `8694e278-08ae-4349-b9fb-491b466c2c51`. Open `worker/wrangler.toml` and replace the existing `database_id` with yours:
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "haven-db"
+database_id = "YOUR-DATABASE-ID-HERE"
+```
+
+Now seed the schema:
+
+```bash
+wrangler d1 execute haven-db --remote --file=../schemas/haven.sql
+```
+
+### 4. Deploy the worker (backend)
+
+```bash
 npm install
 npx wrangler deploy
 ```
 
-This creates your backend on Cloudflare Workers. It handles conversations, identity, and model routing.
+Wrangler will print your worker URL — something like `https://haven-v17.YOUR-SUBDOMAIN.workers.dev`. Copy this, you'll need it next.
 
-### 3. Set up the frontend
+### 5. Set up the frontend
 
 ```bash
 cd ../frontend
 npm install
 ```
 
-Create a `.env` file:
+Create a `.env` file in the `frontend/` directory:
 
 ```
-VITE_API_URL=https://haven.YOUR-SUBDOMAIN.workers.dev
+VITE_API_URL=https://haven-v17.YOUR-SUBDOMAIN.workers.dev
 ```
 
-Replace `YOUR-SUBDOMAIN` with your Cloudflare Workers subdomain (you'll see it after deploying the worker).
+Replace the URL with the one from step 4.
 
-### 4. Deploy the frontend
+### 6. Deploy the frontend
 
 **Option A — Cloudflare Pages (recommended):**
 
@@ -193,9 +226,17 @@ npx wrangler pages deploy dist --project-name haven
 npm run dev
 ```
 
-### 5. Open it up
+### 7. Open it up
 
 Visit your Pages URL (something like `haven-xxx.pages.dev`) and you'll see the setup wizard. Give your companion a name, paste an API key, and start talking.
+
+### 8. (Optional) Secure your Haven
+
+After setup, you'll see an orange banner prompting you to secure your Haven with an auth token. Click "Secure Now" — this generates a key that protects your API from unauthorized access. Save the key somewhere safe — you'll need it to connect from other devices.
+
+### 9. (Optional) Auto-deploy the worker
+
+If you set the `CLOUDFLARE_API_TOKEN` secret in your GitHub fork's repository settings, pushes to `worker/` will auto-deploy via GitHub Actions. Generate an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) with "Workers Scripts: Edit" permission.
 
 That's it. You're home.
 
@@ -434,6 +475,24 @@ The Worker reached your MCP server but the handshake didn't return usable tools.
 
 **MCP shows green tools but the companion never uses them**
 The model you picked doesn't support function calling. Some OpenRouter free models silently ignore the `tools` parameter. Switch to a model explicitly marked as tool-capable — most Claude models, GPT-4 variants, Gemini 1.5+, and Mistral Large work. If in doubt, ask the companion "what tools do you have?" — if it invents tools instead of listing real ones, the model isn't seeing them.
+
+**Black screen / blank page**
+Update to v1.8.2+. Older versions crash the entire React tree when the Worker returns an error. Fixed with a global error boundary and proper HTTP status checking.
+
+**APK loses setup after force-close**
+Update to v1.8.3+. Critical data (auth token, Worker URL) is now stored in Android's native Preferences, which survives app kills. Older APKs stored everything in WebView localStorage which Android can wipe.
+
+**"No response received" after sending a message**
+The model didn't respond — could be a timeout, connection drop, or provider error. Try again. If it persists, switch models or check your provider's status page. This message was added in v1.8.2 — older versions showed nothing at all when the model failed silently.
+
+**Messages disappear when sending on a new conversation**
+Update to v1.8.2+. A race condition between thread creation and message loading was silently aborting the chat stream. Fixed.
+
+**"Too many requests" (429)**
+Haven now rate-limits expensive endpoints (chat: 30/min, uploads: 10/min, auth generation: 5/min). Wait a moment and try again.
+
+**D1 database setup errors (`no such table`)**
+You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db --remote --file=../schemas/haven.sql` from the `worker/` directory.
 
 ---
 

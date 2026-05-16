@@ -1122,7 +1122,45 @@ async function ensureMigrations(db: D1Database): Promise<void> {
     console.log(`[MIGRATE] Error during v1.7 migration: ${e}`);
   }
   await ensureReactionsColumn(db);
+  await db.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (
+    ip TEXT NOT NULL, endpoint TEXT NOT NULL, count INTEGER DEFAULT 1,
+    window_start TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (ip, endpoint)
+  )`).run();
   migrationsRan = true;
+}
+
+const RATE_LIMITS: Record<string, { max: number; windowSec: number }> = {
+  '/api/chat': { max: 30, windowSec: 60 },
+  '/api/upload': { max: 10, windowSec: 60 },
+  '/api/auth/generate': { max: 5, windowSec: 60 },
+};
+
+async function checkRateLimit(db: D1Database, ip: string, endpoint: string): Promise<boolean> {
+  const config = RATE_LIMITS[endpoint];
+  if (!config) return true;
+  const row = await db.prepare(
+    'SELECT count, window_start FROM rate_limits WHERE ip = ? AND endpoint = ?'
+  ).bind(ip, endpoint).first<{ count: number; window_start: string }>();
+  const now = Date.now();
+  if (row) {
+    const windowAge = now - new Date(row.window_start + 'Z').getTime();
+    if (windowAge > config.windowSec * 1000) {
+      await db.prepare(
+        'UPDATE rate_limits SET count = 1, window_start = datetime(\'now\') WHERE ip = ? AND endpoint = ?'
+      ).bind(ip, endpoint).run();
+      return true;
+    }
+    if (row.count >= config.max) return false;
+    await db.prepare(
+      'UPDATE rate_limits SET count = count + 1 WHERE ip = ? AND endpoint = ?'
+    ).bind(ip, endpoint).run();
+    return true;
+  }
+  await db.prepare(
+    'INSERT OR REPLACE INTO rate_limits (ip, endpoint, count, window_start) VALUES (?, ?, 1, datetime(\'now\'))'
+  ).bind(ip, endpoint).run();
+  return true;
 }
 
 // ============================================================
@@ -1143,6 +1181,18 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // ---- Rate limiting ----
+    if (RATE_LIMITS[path]) {
+      const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const allowed = await checkRateLimit(env.DB, ip, path);
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: 'Too many requests. Please wait a moment.' }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '60', ..._cors },
+        });
+      }
+    }
 
     try {
       // ---- Auth routes (exempt from auth check) ----
