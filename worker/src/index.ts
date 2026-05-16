@@ -11,9 +11,10 @@ interface Env {
 }
 
 function getCorsHeaders(request: Request): Record<string, string> {
-  const origin = request.headers.get('Origin') || '*';
+  const origin = request.headers.get('Origin');
+  const allowedOrigin = origin && (origin.endsWith('.pages.dev') || origin.endsWith('.workers.dev') || origin.startsWith('http://localhost') || origin.startsWith('capacitor://')) ? origin : '*';
   return {
-    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Companion-Id, Authorization',
     'Access-Control-Max-Age': '86400',
@@ -1177,7 +1178,7 @@ export default {
       // ---- Auth middleware ----
       const storedToken = await getAuthToken(env.DB);
       if (storedToken) {
-        const isExempt = path === '/' || path === '/health' || path.startsWith('/api/files/') || path === '/api/companion' || path === '/api/companions';
+        const isExempt = path === '/' || path === '/health' || path === '/api/companion' || path === '/api/companions';
         if (!isExempt) {
           const bearer = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
           const qToken = url.searchParams.get('token');
@@ -2105,6 +2106,7 @@ export default {
         const formData = await request.formData();
         const file = formData.get('file') as File;
         if (!file) return json({ error: 'No file provided' }, 400);
+        if (file.size > 20 * 1024 * 1024) return json({ error: 'File too large (max 20MB)' }, 413);
 
         const ext = file.name.split('.').pop() || 'bin';
         const key = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;

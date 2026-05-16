@@ -5,10 +5,10 @@ const config: CapacitorConfig = {
   appName: 'Haven',
   webDir: 'dist',
   server: {
-    allowNavigation: ['*'],
+    allowNavigation: ['*.workers.dev', '*.pages.dev'],
   },
   android: {
-    allowMixedContent: true,
+    allowMixedContent: false,
   },
 };
 
