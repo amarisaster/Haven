@@ -12,6 +12,7 @@ interface ChatInputProps {
 export default function ChatInput({ onSend, disabled, placeholder = 'Type a message...' }: ChatInputProps) {
   const [text, setText] = useState('');
   const [showGif, setShowGif] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [listening, setListening] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -89,6 +90,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     setPendingFile(null);
     setPendingGif(null);
     setShowGif(false);
+    setShowAttachMenu(false);
     inputRef.current?.focus();
   };
 
@@ -224,35 +226,70 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
         {/* Hidden file input */}
         <input ref={fileRef} type="file" accept="image/*,application/pdf,.docx,.epub,text/plain,.md,.txt,audio/*,video/*" onChange={handleFileUpload} className="hidden" />
 
-        {/* Attach button */}
-        <button
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          style={{
-            width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: uploading ? 'var(--haven-accent)' : 'var(--haven-text-muted)',
-            animation: uploading ? 'pulse 1.5s infinite' : undefined,
-          }}
-          title={uploading ? 'Uploading...' : 'Attach file'}
-        >
-          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-          </svg>
-        </button>
+        {/* + button with attachment menu */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            onClick={() => setShowAttachMenu(!showAttachMenu)}
+            style={{
+              width: '32px', height: '32px', borderRadius: '50%',
+              background: showAttachMenu ? 'var(--haven-accent)' : 'transparent',
+              border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: showAttachMenu ? 'white' : 'var(--haven-text-muted)',
+              fontSize: '20px', fontWeight: 300,
+              transition: 'all 0.2s',
+              transform: showAttachMenu ? 'rotate(45deg)' : 'none',
+            }}
+          >+</button>
 
-        {/* GIF button */}
-        <button
-          onClick={() => setShowGif(!showGif)}
-          style={{
-            width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: showGif ? 'var(--haven-accent)' : 'var(--haven-text-muted)',
-            fontSize: '11px', fontWeight: 700,
-          }}
-        >GIF</button>
+          {showAttachMenu && (
+            <div style={{
+              position: 'absolute', bottom: '40px', left: 0,
+              background: 'var(--haven-surface)', border: '1px solid var(--haven-border)',
+              borderRadius: '12px', padding: '4px', minWidth: '160px',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.4)', zIndex: 10,
+            }}>
+              <button
+                onClick={() => { fileRef.current?.click(); setShowAttachMenu(false); }}
+                disabled={uploading}
+                style={{
+                  width: '100%', padding: '10px 14px', background: 'transparent', border: 'none',
+                  color: uploading ? 'var(--haven-accent)' : 'var(--haven-text)', fontSize: '13px',
+                  cursor: 'pointer', textAlign: 'left', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px',
+                }}
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+                </svg>
+                {uploading ? 'Uploading...' : 'Attach file'}
+              </button>
+              <button
+                onClick={() => { setShowGif(!showGif); setShowAttachMenu(false); }}
+                style={{
+                  width: '100%', padding: '10px 14px', background: 'transparent', border: 'none',
+                  color: 'var(--haven-text)', fontSize: '13px',
+                  cursor: 'pointer', textAlign: 'left', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px',
+                }}
+              >
+                <span style={{ fontSize: '14px', width: '16px', textAlign: 'center' }}>GIF</span>
+                Search GIFs
+              </button>
+              <button
+                onClick={() => setShowAttachMenu(false)}
+                disabled
+                style={{
+                  width: '100%', padding: '10px 14px', background: 'transparent', border: 'none',
+                  color: 'var(--haven-text-muted)', fontSize: '13px',
+                  cursor: 'default', textAlign: 'left', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px',
+                  opacity: 0.5,
+                }}
+              >
+                <span style={{ fontSize: '14px', width: '16px', textAlign: 'center' }}>&#9734;</span>
+                Stickers (coming soon)
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Input area */}
         <div style={{
