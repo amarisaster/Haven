@@ -1,14 +1,34 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { Message } from '../lib/types';
 import { speak, stop } from '../lib/tts';
 import { getAuthToken, apiBase } from '../lib/api';
 
-function authUrl(url: string): string {
-  const token = getAuthToken();
+function needsAuth(url: string): boolean {
   const base = apiBase();
-  if (!token || !base || !url.startsWith(base)) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
+  return !!getAuthToken() && !!base && url.startsWith(base);
+}
+
+function AuthMedia({ url, type, style, alt }: { url: string; type: 'img' | 'video' | 'audio'; style?: React.CSSProperties; alt?: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!needsAuth(url)) { setBlobUrl(url); return; }
+    let revoke = '';
+    const token = getAuthToken();
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => { if (!r.ok) throw new Error(); return r.blob(); })
+      .then(blob => { revoke = URL.createObjectURL(blob); setBlobUrl(revoke); })
+      .catch(() => setFailed(true));
+    return () => { if (revoke) URL.revokeObjectURL(revoke); };
+  }, [url]);
+
+  if (failed) return null;
+  if (!blobUrl) return <div style={{ ...style, background: 'var(--haven-card)', minHeight: '40px' }} />;
+
+  if (type === 'img') return <img src={blobUrl} alt={alt || ''} style={style} loading="lazy" onError={() => setFailed(true)} />;
+  if (type === 'video') return <video src={blobUrl} controls preload="metadata" style={style} />;
+  return <audio src={blobUrl} controls preload="metadata" style={style} />;
 }
 
 interface MessageBubbleProps {
@@ -212,36 +232,11 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string): React.Reac
         return <div key={k}>{renderFormatted(part.text)}</div>;
       case 'image':
       case 'gif':
-        return (
-          <img
-            key={k}
-            src={authUrl(part.url)}
-            alt=""
-            style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
-            loading="lazy"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-          />
-        );
+        return <AuthMedia key={k} url={part.url} type="img" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />;
       case 'video':
-        return (
-          <video
-            key={k}
-            src={authUrl(part.url)}
-            controls
-            preload="metadata"
-            style={{ maxWidth: '320px', borderRadius: '10px', marginTop: '8px', display: 'block' }}
-          />
-        );
+        return <AuthMedia key={k} url={part.url} type="video" style={{ maxWidth: '320px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />;
       case 'audio':
-        return (
-          <audio
-            key={k}
-            src={authUrl(part.url)}
-            controls
-            preload="metadata"
-            style={{ maxWidth: '100%', marginTop: '8px', display: 'block' }}
-          />
-        );
+        return <AuthMedia key={k} url={part.url} type="audio" style={{ maxWidth: '100%', marginTop: '8px', display: 'block' }} />;
       case 'file': {
         const sizeHint = part.pages
           ? `${part.pages} pages · ${Math.round(part.body.length / 1000)}k chars`
@@ -440,7 +435,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
               )}
               {renderContentParts(parsedParts, `m-${message.id}`)}
               {message.image && (
-                <img src={authUrl(message.image)} alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                <AuthMedia url={message.image} type="img" alt="Attached" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />
               )}
               {isStreaming && !message.content && (
                 // Typing indicator — shown while waiting for the first token

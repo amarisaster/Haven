@@ -6,7 +6,7 @@ import {
   getIdentity, addIdentity, deleteIdentity,
   uploadFile, getUserStatus, setUserStatus, apiBase,
   archiveCompanion, setActiveCompanionId, activeCompanionId,
-  exportCompanionUrl, getStorageUsage, clearChatFiles,
+  exportCompanion, getStorageUsage, clearChatFiles,
   getAuthStatus, generateAuthToken, saveAuthToken, getAuthToken, clearAuthToken, revokeAuthToken,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
@@ -465,20 +465,18 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
               memories / people / important_dates / files (text only) so
               the companion can be re-imported into another Haven instance.
               Threads intentionally not included. */}
-          <a
-            href={exportCompanionUrl(compId)}
-            download
+          <button
+            onClick={() => exportCompanion(compId, compName || 'companion').catch(() => {})}
             style={{
               ...btnStyle,
               background: 'transparent',
               border: '1px solid var(--haven-border)',
               color: 'var(--haven-text-secondary)',
-              textDecoration: 'none',
-              display: 'inline-block',
+              cursor: 'pointer',
             }}
           >
             Export this companion
-          </a>
+          </button>
           {compMsg && <span style={{ fontSize: '12px', color: compMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{compMsg}</span>}
         </div>
 

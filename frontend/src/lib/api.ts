@@ -196,16 +196,21 @@ export async function revokeAuthToken(): Promise<void> {
   });
 }
 
-function appendAuthParam(url: string): string {
-  const token = getAuthToken();
-  if (!token) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
+export async function downloadAuth(path: string, filename: string): Promise<void> {
+  const res = await safeFetch(path, { headers: scopedHeaders() });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // Companion export / import
-export function exportCompanionUrl(companionId: number): string {
-  return appendAuthParam(`${apiBase()}/api/companions/${companionId}/export`);
+export async function exportCompanion(companionId: number, name: string): Promise<void> {
+  return downloadAuth(`/api/companions/${companionId}/export`, `companion-${name}.json`);
 }
 export const importCompanion = (bundle: unknown) =>
   post<{ success: boolean; id: number }>('/api/companions/import', bundle);
@@ -260,12 +265,12 @@ export async function uploadFile(file: File): Promise<{ key: string; url: string
 }
 
 // Export
-export function exportThreadUrl(threadId: string): string {
-  return appendAuthParam(`${apiBase()}/api/export/thread/${threadId}`);
+export async function exportThread(threadId: string): Promise<void> {
+  return downloadAuth(`/api/export/thread/${threadId}`, `thread-${threadId}.json`);
 }
 
-export function exportAllUrl(): string {
-  return appendAuthParam(`${apiBase()}/api/export/all`);
+export async function exportAll(): Promise<void> {
+  return downloadAuth('/api/export/all', 'haven-export.json');
 }
 
 // Chat (SSE stream)
