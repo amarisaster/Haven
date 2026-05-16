@@ -1,5 +1,6 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import type { Identity } from '../lib/types';
+import AuthMedia from '../components/AuthMedia';
 import {
   getCompanion, updateCompanion,
   getSettings, updateSettings,
@@ -438,7 +439,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           <label style={labelStyle}>Avatar</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {avatarUrl && (
-              <img src={avatarUrl} alt="avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--haven-border)' }} />
+              <AuthMedia url={avatarUrl} type="img" alt="avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--haven-border)' }} />
             )}
             <label style={{
               flex: 1, padding: '10px', borderRadius: '8px', textAlign: 'center',
