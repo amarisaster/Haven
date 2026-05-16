@@ -2243,8 +2243,11 @@ export default {
           });
         }
 
+        const settings = await env.DB.prepare('SELECT key, value FROM settings WHERE key != ?').bind('auth_token').all();
+        const mcpServers = await env.DB.prepare('SELECT name, url, api_key, enabled FROM mcp_servers ORDER BY created_at ASC').all();
+
         const exported = {
-          haven_version: '1.7.0',
+          haven_version: '1.8.4',
           exported_at: new Date().toISOString(),
           companions: companions.results || [],
           identity: identity.results || [],
@@ -2253,6 +2256,8 @@ export default {
           people: people.results || [],
           important_dates: dates.results || [],
           companion_files: files.results || [],
+          settings: settings.results || [],
+          mcp_servers: mcpServers.results || [],
         };
 
         return new Response(JSON.stringify(exported, null, 2), {
@@ -2262,6 +2267,62 @@ export default {
             ..._cors,
           },
         });
+      }
+
+      // ---- Full Import (restore from backup) ----
+      if (path === '/api/import/full' && request.method === 'POST') {
+        const bundle = await request.json() as any;
+        if (!bundle?.companions) return json({ error: 'Invalid backup — missing companions' }, 400);
+        const errors: string[] = [];
+        let imported = 0;
+
+        for (const c of (bundle.companions || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO companion (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').bind(c.id, c.name, c.avatar_url || null, c.created_at || new Date().toISOString()).run();
+            imported++;
+          } catch (e: any) { errors.push(`companion ${c.name}: ${e.message}`); }
+        }
+        for (const row of (bundle.identity || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO identity (id, companion_id, content, identity_type, priority, pinned, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(row.id, row.companion_id || 1, row.content, row.identity_type, row.priority || 5, row.pinned || 0, row.created_at || new Date().toISOString()).run();
+          } catch (e: any) { errors.push(`identity: ${e.message}`); }
+        }
+        for (const t of (bundle.threads || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO threads (id, companion_id, title, last_message_at, created_at) VALUES (?, ?, ?, ?, ?)').bind(t.id, t.companion_id || 1, t.title, t.last_message_at, t.created_at || new Date().toISOString()).run();
+            for (const m of (t.messages || [])) {
+              const mid = crypto.randomUUID();
+              await env.DB.prepare('INSERT OR IGNORE INTO messages (id, thread_id, role, content, model, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(mid, t.id, m.role, m.content, m.model || null, m.created_at || new Date().toISOString()).run();
+            }
+          } catch (e: any) { errors.push(`thread: ${e.message}`); }
+        }
+        for (const row of (bundle.memories || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO memories (id, companion_id, content, memory_type, emotional_weight, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(row.id, row.companion_id || 1, row.content, row.memory_type || 'core', row.emotional_weight || 5, row.created_at || new Date().toISOString()).run();
+          } catch (e: any) { errors.push(`memory: ${e.message}`); }
+        }
+        for (const row of (bundle.people || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO people (id, companion_id, name, category, content, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(row.id, row.companion_id || 1, row.name, row.category || 'friend', row.content, row.created_at || new Date().toISOString()).run();
+          } catch (e: any) { errors.push(`people: ${e.message}`); }
+        }
+        for (const row of (bundle.important_dates || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO important_dates (id, companion_id, date_name, actual_date, date_type, recurring, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(row.id, row.companion_id || 1, row.date_name, row.actual_date, row.date_type || 'event', row.recurring || 0, row.created_at || new Date().toISOString()).run();
+          } catch (e: any) { errors.push(`date: ${e.message}`); }
+        }
+        for (const s of (bundle.settings || [])) {
+          try {
+            await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(s.key, s.value).run();
+          } catch (e: any) { errors.push(`setting: ${e.message}`); }
+        }
+        for (const s of (bundle.mcp_servers || [])) {
+          try {
+            await env.DB.prepare('INSERT INTO mcp_servers (name, url, api_key, enabled) VALUES (?, ?, ?, ?)').bind(s.name, s.url, s.api_key || null, s.enabled ?? 1).run();
+          } catch (e: any) { errors.push(`mcp: ${e.message}`); }
+        }
+
+        return json({ success: true, companions_imported: imported, errors: errors.length > 0 ? errors : undefined });
       }
 
       // ---- MCP Servers ----
