@@ -1863,16 +1863,13 @@ export default {
       const SETTINGS_SECRET_PATTERN = /_key$|_token$|_secret$|password/i;
       const ALLOWED_SETTINGS_KEYS = new Set([
         'provider',
-        'openrouter_key',
+        'openrouter_key', 'ollama_url', 'ollama_key',
+        'anthropic_key', 'openai_key', 'groq_key', 'xai_key', 'huggingface_key',
         'custom_key', 'custom_base_url',
-        'ollama_url', 'ollama_key',
         'companion_status', 'companion_presence',
         'user_status', 'user_presence',
         'mcp_tool_limit',
         'giphy_key',
-        // Per-provider on/off toggles. Absent/empty = enabled (back compat).
-        // "false" (string) = disabled. Worker treats disabled providers as
-        // if they had no key when resolving chat requests or listing models.
         'openrouter_enabled', 'ollama_enabled', 'custom_enabled',
       ]);
 
