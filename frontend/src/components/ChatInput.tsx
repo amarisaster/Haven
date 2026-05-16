@@ -231,12 +231,12 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
           <button
             onClick={() => setShowAttachMenu(!showAttachMenu)}
             style={{
-              width: '32px', height: '32px', borderRadius: '50%',
+              width: '40px', height: '40px', borderRadius: '50%',
               background: showAttachMenu ? 'var(--haven-accent)' : 'transparent',
               border: 'none', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: showAttachMenu ? 'white' : 'var(--haven-text-muted)',
-              fontSize: '20px', fontWeight: 300,
+              fontSize: '26px', fontWeight: 300,
               transition: 'all 0.2s',
               transform: showAttachMenu ? 'rotate(45deg)' : 'none',
             }}
