@@ -33,6 +33,7 @@ export function getAuthToken(): string | null {
 }
 export function saveAuthToken(token: string): void {
   persistSet('haven-auth-token', token);
+  localStorage.setItem('haven-auth-saved-at', String(Date.now()));
 }
 export function clearAuthToken(): void {
   persistRemove('haven-auth-token');
@@ -67,9 +68,12 @@ async function parseJson<T>(res: Response, path: string): Promise<T> {
     throw new Error(`Invalid JSON response from ${path}`);
   }
   if (!res.ok) {
-    if (res.status === 401) {
-      clearAuthToken();
-      window.dispatchEvent(new Event('haven-auth-expired'));
+    if (res.status === 401 && path !== '/api/auth/status' && path !== '/api/auth/generate') {
+      const lastSave = Number(localStorage.getItem('haven-auth-saved-at') || '0');
+      if (Date.now() - lastSave > 5000) {
+        clearAuthToken();
+        window.dispatchEvent(new Event('haven-auth-expired'));
+      }
     }
     throw new Error(parsed?.error || `Request failed (${res.status}) for ${path}`);
   }
