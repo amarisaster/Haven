@@ -1,35 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import type { Message } from '../lib/types';
 import { speak, stop } from '../lib/tts';
-import { getAuthToken, apiBase } from '../lib/api';
-
-function needsAuth(url: string): boolean {
-  const base = apiBase();
-  return !!getAuthToken() && !!base && url.startsWith(base);
-}
-
-function AuthMedia({ url, type, style, alt }: { url: string; type: 'img' | 'video' | 'audio'; style?: React.CSSProperties; alt?: string }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!needsAuth(url)) { setBlobUrl(url); return; }
-    let revoke = '';
-    const token = getAuthToken();
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then(r => { if (!r.ok) throw new Error(); return r.blob(); })
-      .then(blob => { revoke = URL.createObjectURL(blob); setBlobUrl(revoke); })
-      .catch(() => setFailed(true));
-    return () => { if (revoke) URL.revokeObjectURL(revoke); };
-  }, [url]);
-
-  if (failed) return null;
-  if (!blobUrl) return <div style={{ ...style, background: 'var(--haven-card)', minHeight: '40px' }} />;
-
-  if (type === 'img') return <img src={blobUrl} alt={alt || ''} style={style} loading="lazy" onError={() => setFailed(true)} />;
-  if (type === 'video') return <video src={blobUrl} controls preload="metadata" style={style} />;
-  return <audio src={blobUrl} controls preload="metadata" style={style} />;
-}
+import AuthMedia from './AuthMedia';
 
 interface MessageBubbleProps {
   message: Message;
@@ -329,7 +301,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
     >
       {/* Companion avatar */}
       {isCompanion && companionAvatar && (
-        <img src={companionAvatar} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, alignSelf: 'flex-end' }} />
+        <AuthMedia url={companionAvatar} type="img" alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, alignSelf: 'flex-end' }} />
       )}
       <div style={{ maxWidth: '85%', minWidth: '60px' }}>
         {/* Bubble */}

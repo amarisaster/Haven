@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Companion } from '../lib/types';
 import { listCompanions, setActiveCompanionId } from '../lib/api';
+import AuthMedia from './AuthMedia';
 
 interface CompanionSwitcherProps {
   activeId: number;
@@ -72,8 +73,9 @@ export default function CompanionSwitcher({ activeId, onSwitch, onBackToGrid }: 
             }}
           >
             {c.avatar_url ? (
-              <img
-                src={c.avatar_url}
+              <AuthMedia
+                url={c.avatar_url}
+                type="img"
                 alt=""
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
               />

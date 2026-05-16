@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Thread } from '../lib/types';
 import { getThreads, deleteThread, renameThread } from '../lib/api';
 import { deleteWallpaper } from '../lib/wallpaper-store';
+import AuthMedia from './AuthMedia';
 import CompanionSwitcher from './CompanionSwitcher';
 
 interface ThreadListProps {
@@ -114,7 +115,7 @@ export default function ThreadList({
           title={onBackToGrid ? 'Back to companions' : undefined}
         >
           {companionAvatar ? (
-            <img src={companionAvatar} alt="" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
+            <AuthMedia url={companionAvatar} type="img" alt="" style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }} />
           ) : (
             <div style={{
               width: '36px', height: '36px', borderRadius: '50%',
@@ -202,7 +203,7 @@ export default function ThreadList({
               >
                 {/* Avatar */}
                 {companionAvatar ? (
-                  <img src={companionAvatar} alt="" style={{ width: '44px', height: '44px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  <AuthMedia url={companionAvatar} type="img" alt="" style={{ width: '44px', height: '44px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
                 ) : (
                   <div style={{
                     width: '44px', height: '44px', borderRadius: '50%', flexShrink: 0,

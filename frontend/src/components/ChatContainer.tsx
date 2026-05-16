@@ -7,6 +7,7 @@ import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ModelSelector from './ModelSelector';
 import WallpaperPicker from './WallpaperPicker';
+import AuthMedia from './AuthMedia';
 
 interface ChatContainerProps {
   threadId: string | null;
@@ -408,7 +409,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
             {companionAvatar ? (
-              <img src={companionAvatar} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
+              <AuthMedia url={companionAvatar} type="img" alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} />
             ) : (
               <div style={{
                 width: '32px', height: '32px', borderRadius: '50%',

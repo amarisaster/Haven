@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Companion } from '../lib/types';
 import { listCompanions, setActiveCompanionId, activeCompanionId } from '../lib/api';
+import AuthMedia from './AuthMedia';
 
 interface CompanionGridProps {
   onOpenCompanion: (companionId: number) => void;
@@ -91,8 +92,9 @@ export default function CompanionGrid({ onOpenCompanion, onAddCompanion, onOpenS
                 }}
               >
                 {c.avatar_url ? (
-                  <img
-                    src={c.avatar_url}
+                  <AuthMedia
+                    url={c.avatar_url}
+                    type="img"
                     alt=""
                     style={{ width: '56px', height: '56px', borderRadius: '50%', objectFit: 'cover' }}
                   />
