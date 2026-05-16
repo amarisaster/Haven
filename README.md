@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.8.3-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.8.4-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -438,6 +438,14 @@ The model you picked doesn't support function calling. Some OpenRouter free mode
 ---
 
 ## Recent updates
+
+**v1.8.4** — Security Hardening
+
+- **R2 files now require auth** — uploaded files (images, audio, documents) are no longer publicly accessible. They require your auth token via `?token=` parameter, same as other protected endpoints.
+- **Security headers** — added `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, and `Permissions-Policy` to all Pages responses. Prevents clickjacking and MIME-type sniffing.
+- **WebView locked down** — Android APK no longer allows navigation to arbitrary URLs. Restricted to `*.workers.dev` and `*.pages.dev` origins. Mixed content (HTTP on HTTPS) disabled.
+- **Server-side file size limit** — uploads are now capped at 20MB server-side, not just client-side.
+- **CORS hardened** — the worker no longer reflects arbitrary origins. Only known origins (Pages, Workers, localhost, Capacitor) get reflected; others fall back to `*`.
 
 **v1.8.3** — APK Auth Fixes
 
