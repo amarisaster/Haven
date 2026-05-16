@@ -99,18 +99,17 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
   const refreshProviders = () => {
     getSettings().then((s) => {
-      setApiKey(s.openrouter_key || s.ollama_key || s.custom_key || s.ollama_url || '');
+      setApiKey(s.openrouter_key || s.ollama_key || s.anthropic_key || s.openai_key || s.groq_key || s.xai_key || s.huggingface_key || s.custom_key || s.ollama_url || '');
       const connected: string[] = [];
       if (s.openrouter_key) connected.push('OpenRouter');
-      if (s.ollama_key) connected.push('Ollama');
-      if (s.custom_key) {
-        const url = s.custom_base_url || '';
-        if (url.includes('huggingface') || url.includes('hf.co')) connected.push('Hugging Face');
-        else if (url.includes('groq.com')) connected.push('Groq');
-        else if (url.includes('openai.com')) connected.push('OpenAI');
-        else if (url.includes('anthropic.com')) connected.push('Anthropic');
-        else if (url.includes('x.ai')) connected.push('xAI');
-        else if (s.provider) connected.push(s.provider);
+      if (s.ollama_key || s.ollama_url) connected.push('Ollama');
+      if (s.anthropic_key) connected.push('Anthropic');
+      if (s.openai_key) connected.push('OpenAI');
+      if (s.groq_key) connected.push('Groq');
+      if (s.xai_key) connected.push('xAI');
+      if (s.huggingface_key) connected.push('Hugging Face');
+      if (s.custom_key && !s.anthropic_key && !s.openai_key && !s.groq_key && !s.xai_key && !s.huggingface_key) {
+        connected.push(s.provider || 'Custom');
       }
       setConnectedProviders(connected);
       setProviderEnabled({
@@ -171,44 +170,35 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
     setApiSaving(true);
     setApiMsg('');
     try {
-      // Auto-detect provider from key format
-      // Only set fields for the detected provider — don't blank others
       const settings: Record<string, string> = {};
       const key = apiKey.trim();
       if (key.startsWith('http://') || key.startsWith('https://')) {
-        // Reject anything that's not a valid http(s) URL (e.g. javascript:, file:)
         try { new URL(key); }
         catch { throw new Error('Invalid URL'); }
         settings.ollama_url = key;
         settings.provider = 'ollama';
       } else if (key.startsWith('hf_')) {
-        settings.custom_key = key;
-        settings.custom_base_url = 'https://router.huggingface.co/v1';
+        settings.huggingface_key = key;
         settings.provider = 'huggingface';
       } else if (key.startsWith('sk-or-')) {
         settings.openrouter_key = key;
         settings.provider = 'openrouter';
       } else if (key.startsWith('gsk_')) {
-        settings.custom_key = key;
-        settings.custom_base_url = 'https://api.groq.com/openai/v1';
+        settings.groq_key = key;
         settings.provider = 'groq';
       } else if (key.startsWith('sk-ant-')) {
-        settings.custom_key = key;
-        settings.custom_base_url = 'https://api.anthropic.com/v1';
+        settings.anthropic_key = key;
         settings.provider = 'anthropic';
       } else if (key.startsWith('sk-') || key.startsWith('sk-proj-')) {
-        settings.custom_key = key;
-        settings.custom_base_url = 'https://api.openai.com/v1';
+        settings.openai_key = key;
         settings.provider = 'openai';
       } else if (key.startsWith('xai-')) {
-        settings.custom_key = key;
-        settings.custom_base_url = 'https://api.x.ai/v1';
+        settings.xai_key = key;
         settings.provider = 'xai';
       } else if (/^[a-f0-9]+\.[a-zA-Z0-9_-]+$/.test(key)) {
         settings.ollama_key = key;
         settings.provider = 'ollama';
       } else if (key) {
-        // Default: treat as OpenAI-compatible key via OpenRouter
         settings.openrouter_key = key;
         settings.provider = 'openrouter';
       }

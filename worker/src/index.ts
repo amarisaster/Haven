@@ -565,38 +565,21 @@ async function inferenceWithTools(
   const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS];
   const toolLookup = new Map(tools.map(t => [t.name, t]));
 
-  // Build headers/URL same as streamInference. Per-provider toggles gate the
-  // key — if disabled, treat as if no key is set so the routing cascades
-  // through the else-branch (i.e., toggling off ollama falls back to OR etc).
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
-    isProviderEnabled(env.DB, 'openrouter'),
-    isProviderEnabled(env.DB, 'ollama'),
-    isProviderEnabled(env.DB, 'custom'),
-  ]);
-  const openrouterKey = orEnabled ? (env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key')) : null;
-  const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
-  const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
-  const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
-  const baseOllamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
-
+  const resolved = await resolveProviderConfig(provider, env.DB, env);
   let url: string;
-  let isAnthropic = false;
-  if (provider === 'ollama') {
-    url = `${baseOllamaUrl}/api/chat`;
-    if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (provider === 'anthropic' && customBaseUrl && customKey) {
-    isAnthropic = true;
-    url = `${customBaseUrl}/messages`;
-    headers['x-api-key'] = customKey;
+  let isAnthropic = resolved.format === 'anthropic';
+  if (resolved.format === 'ollama') {
+    url = `${resolved.url}/api/chat`;
+    if (resolved.key) headers['Authorization'] = `Bearer ${resolved.key}`;
+  } else if (isAnthropic) {
+    url = `${resolved.url}/messages`;
+    headers['x-api-key'] = resolved.key || '';
     headers['anthropic-version'] = '2023-06-01';
-  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(provider)) {
-    url = `${customBaseUrl}/chat/completions`;
-    headers['Authorization'] = `Bearer ${customKey}`;
   } else {
-    url = 'https://openrouter.ai/api/v1/chat/completions';
-    headers['Authorization'] = `Bearer ${openrouterKey}`;
-    headers['X-Title'] = 'Haven';
+    url = `${resolved.url}/chat/completions`;
+    headers['Authorization'] = `Bearer ${resolved.key}`;
+    if (provider === 'openrouter') headers['X-Title'] = 'Haven';
   }
 
   const conversation = [...messages];
@@ -859,6 +842,38 @@ async function getSettingValue(db: D1Database, key: string): Promise<string | nu
   return row?.value || null;
 }
 
+const PROVIDER_ENDPOINTS: Record<string, { url: string; keyField: string; format: 'openai' | 'anthropic' | 'ollama' }> = {
+  openai: { url: 'https://api.openai.com/v1', keyField: 'openai_key', format: 'openai' },
+  anthropic: { url: 'https://api.anthropic.com', keyField: 'anthropic_key', format: 'anthropic' },
+  groq: { url: 'https://api.groq.com/openai/v1', keyField: 'groq_key', format: 'openai' },
+  xai: { url: 'https://api.x.ai/v1', keyField: 'xai_key', format: 'openai' },
+  huggingface: { url: 'https://router.huggingface.co/v1', keyField: 'huggingface_key', format: 'openai' },
+};
+
+async function resolveProviderConfig(provider: string, db: D1Database, env: Env): Promise<{ url: string; key: string | null; format: 'openai' | 'anthropic' | 'ollama' }> {
+  if (provider === 'ollama') {
+    const baseUrl = env.OLLAMA_URL || await getSettingValue(db, 'ollama_url') || 'https://api.ollama.com';
+    const key = await getSettingValue(db, 'ollama_key');
+    return { url: baseUrl, key, format: 'ollama' };
+  }
+  if (provider === 'openrouter') {
+    const key = env.OPENROUTER_API_KEY || await getSettingValue(db, 'openrouter_key');
+    return { url: 'https://openrouter.ai/api/v1', key, format: 'openai' };
+  }
+  const endpoint = PROVIDER_ENDPOINTS[provider];
+  if (endpoint) {
+    const key = await getSettingValue(db, endpoint.keyField) || await getSettingValue(db, 'custom_key');
+    return { url: endpoint.url, key, format: endpoint.format };
+  }
+  const customKey = await getSettingValue(db, 'custom_key');
+  const customUrl = await getSettingValue(db, 'custom_base_url');
+  if (customKey && customUrl) {
+    return { url: customUrl, key: customKey, format: 'openai' };
+  }
+  const orKey = env.OPENROUTER_API_KEY || await getSettingValue(db, 'openrouter_key');
+  return { url: 'https://openrouter.ai/api/v1', key: orKey, format: 'openai' };
+}
+
 function buildAnthropicMessages(messages: Array<{ role: string; content: any }>): { system: string; messages: Array<{ role: string; content: any }> } {
   let system = '';
   const filtered: Array<{ role: string; content: any }> = [];
@@ -905,44 +920,23 @@ async function* streamInference(
   env: Env,
   thinking = false,
 ): AsyncGenerator<string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const resolved = await resolveProviderConfig(provider, env.DB, env);
   let url: string;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  // Read API keys from env (wrangler secrets) OR D1 settings. Per-provider
-  // toggles null the key when a provider is disabled so the routing cascades
-  // as if no key were configured.
-  const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
-    isProviderEnabled(env.DB, 'openrouter'),
-    isProviderEnabled(env.DB, 'ollama'),
-    isProviderEnabled(env.DB, 'custom'),
-  ]);
-  const openrouterKey = orEnabled ? (env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key')) : null;
-  const ollamaUrl = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url');
-  const ollamaKey = ollamaEnabled ? await getSettingValue(env.DB, 'ollama_key') : null;
-  const customKey = customEnabled ? await getSettingValue(env.DB, 'custom_key') : null;
-  const customBaseUrl = customEnabled ? await getSettingValue(env.DB, 'custom_base_url') : null;
-
   let useNativeOllama = false;
-  let isAnthropic = false;
-  const baseOllamaUrl = ollamaUrl || 'https://api.ollama.com';
+  let isAnthropic = resolved.format === 'anthropic';
 
-  if (provider === 'ollama') {
-    url = `${baseOllamaUrl}/v1/chat/completions`;
-    if (ollamaKey) headers['Authorization'] = `Bearer ${ollamaKey}`;
-  } else if (provider === 'anthropic' && customBaseUrl && customKey) {
-    isAnthropic = true;
-    url = `${customBaseUrl}/messages`;
-    headers['x-api-key'] = customKey;
+  if (resolved.format === 'ollama') {
+    url = `${resolved.url}/v1/chat/completions`;
+    if (resolved.key) headers['Authorization'] = `Bearer ${resolved.key}`;
+  } else if (isAnthropic) {
+    url = `${resolved.url}/messages`;
+    headers['x-api-key'] = resolved.key || '';
     headers['anthropic-version'] = '2023-06-01';
-  } else if (customBaseUrl && customKey && ['openai', 'groq', 'xai', 'huggingface'].includes(provider)) {
-    url = `${customBaseUrl}/chat/completions`;
-    headers['Authorization'] = `Bearer ${customKey}`;
   } else {
-    url = 'https://openrouter.ai/api/v1/chat/completions';
-    headers['Authorization'] = `Bearer ${openrouterKey}`;
-    headers['X-Title'] = 'Haven';
+    url = `${resolved.url}/chat/completions`;
+    headers['Authorization'] = `Bearer ${resolved.key}`;
+    if (provider === 'openrouter') headers['X-Title'] = 'Haven';
   }
 
   const inferMsgs = [...messages];
@@ -973,7 +967,7 @@ async function* streamInference(
 
   // Ollama fallback: if OpenAI-compatible endpoint fails, try native /api/chat
   if (!response.ok && provider === 'ollama') {
-    const nativeUrl = `${baseOllamaUrl}/api/chat`;
+    const nativeUrl = `${resolved.url}/api/chat`;
     response = await fetch(nativeUrl, {
       method: 'POST',
       headers,
@@ -1516,7 +1510,7 @@ export default {
       if (path === '/api/threads' && request.method === 'GET') {
         const cid = getCompanionId(request);
         const threads = await env.DB.prepare(
-          'SELECT * FROM threads WHERE companion_id = ? ORDER BY last_message_at DESC LIMIT 50'
+          'SELECT * FROM threads WHERE companion_id = ? ORDER BY last_message_at DESC LIMIT 200'
         ).bind(cid).all();
         return json(threads.results || []);
       }
