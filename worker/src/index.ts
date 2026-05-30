@@ -595,12 +595,12 @@ async function inferenceWithTools(
     let resp: Response;
     if (isAnthropic) {
       const { system, messages: anthropicMsgs } = buildAnthropicMessages(conversation);
-      const extendedThinking = thinking && /claude-sonnet-4-5/.test(model);
+      const usesBudgetThinking = thinking && /claude-sonnet-4-5|claude-opus-4-[56]/.test(model);
       const noTemperature = /claude-opus-4-[789]/.test(model);
       const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: false };
       if (!noTemperature) body.temperature = temperature ?? 0.8;
       if (thinking) {
-        if (extendedThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
+        if (usesBudgetThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
         else body.thinking = { type: 'adaptive' };
       }
       if (system) body.system = cache
@@ -954,12 +954,12 @@ async function* streamInference(
   let response: Response;
   if (isAnthropic) {
     const { system, messages: anthropicMsgs } = buildAnthropicMessages(inferMsgs);
-    const extendedThinking = thinking && /claude-sonnet-4-5/.test(model);
+    const usesBudgetThinking = thinking && /claude-sonnet-4-5|claude-opus-4-[56]/.test(model);
     const noTemperature = /claude-opus-4-[789]/.test(model);
     const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: true };
     if (!noTemperature) body.temperature = temperature ?? 0.8;
     if (thinking) {
-      if (extendedThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
+      if (usesBudgetThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
       else body.thinking = { type: 'adaptive' };
     }
     if (system) body.system = cache
@@ -1129,20 +1129,24 @@ async function ensureMigrations(db: D1Database): Promise<void> {
   } catch (e) {
     console.log(`[MIGRATE] Error during v1.7 migration: ${e}`);
   }
-  await ensureReactionsColumn(db);
-  await db.prepare(`CREATE TABLE IF NOT EXISTS custom_media (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK(type IN ('emoji', 'sticker')),
-    r2_key TEXT NOT NULL,
-    content_type TEXT,
-    added_at TEXT DEFAULT (datetime('now'))
-  )`).run();
-  await db.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (
-    ip TEXT NOT NULL, endpoint TEXT NOT NULL, count INTEGER DEFAULT 1,
-    window_start TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (ip, endpoint)
-  )`).run();
+  try { await ensureReactionsColumn(db); } catch {}
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS custom_media (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('emoji', 'sticker')),
+      r2_key TEXT NOT NULL,
+      content_type TEXT,
+      added_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+  } catch {}
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (
+      ip TEXT NOT NULL, endpoint TEXT NOT NULL, count INTEGER DEFAULT 1,
+      window_start TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (ip, endpoint)
+    )`).run();
+  } catch {}
   migrationsRan = true;
 }
 

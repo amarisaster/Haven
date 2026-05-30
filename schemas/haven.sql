@@ -98,6 +98,25 @@ CREATE TABLE IF NOT EXISTS companion_files (
 );
 CREATE INDEX IF NOT EXISTS idx_companion_files_companion ON companion_files(companion_id, added_at DESC);
 
+-- Custom emoji & stickers (uploaded media, GLOBAL per-user)
+CREATE TABLE IF NOT EXISTS custom_media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('emoji', 'sticker')),
+    r2_key TEXT NOT NULL,
+    content_type TEXT,
+    added_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Rate limiting
+CREATE TABLE IF NOT EXISTS rate_limits (
+    ip TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    count INTEGER DEFAULT 1,
+    window_start TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (ip, endpoint)
+);
+
 -- Settings (key-value store — GLOBAL per-user, not per-companion. API keys
 -- and model prefs live here and are shared across all companions.)
 CREATE TABLE IF NOT EXISTS settings (
