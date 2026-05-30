@@ -1,7 +1,27 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { Message } from '../lib/types';
 import { speak, stop } from '../lib/tts';
+import { apiBase, authedFetch } from '../lib/api';
 import AuthMedia from './AuthMedia';
+
+let _emojiCache: Map<string, string> | null = null;
+let _emojiFetching = false;
+function loadCustomEmoji() {
+  if (_emojiCache || _emojiFetching) return;
+  _emojiFetching = true;
+  const base = apiBase();
+  if (!base) { _emojiFetching = false; return; }
+  authedFetch(`${base}/api/custom-media?type=emoji`)
+    .then(r => r.json())
+    .then(d => {
+      if (!Array.isArray(d)) return;
+      _emojiCache = new Map();
+      for (const e of d) _emojiCache.set(e.name, `${base}${e.url}`);
+    })
+    .catch(() => {})
+    .finally(() => { _emojiFetching = false; });
+}
+export function refreshEmojiCache() { _emojiCache = null; loadCustomEmoji(); }
 
 interface MessageBubbleProps {
   message: Message;
@@ -151,6 +171,22 @@ function renderFormatted(text: string): React.ReactNode[] {
         if (!firstMatch || candidate.index < firstMatch.index) firstMatch = candidate;
       }
 
+      // Custom emoji: :name:
+      if (_emojiCache) {
+        const emojiMatch = remaining.match(/:([a-zA-Z0-9_-]+):/);
+        if (emojiMatch && emojiMatch.index !== undefined) {
+          const url = _emojiCache.get(emojiMatch[1]);
+          if (url) {
+            const candidate = {
+              index: emojiMatch.index,
+              length: emojiMatch[0].length,
+              node: <AuthMedia key={`ce-${i}-${key++}`} url={url} type="img" alt={emojiMatch[1]} style={{ display: 'inline-block', width: '24px', height: '24px', verticalAlign: 'middle', objectFit: 'contain' }} />,
+            };
+            if (!firstMatch || candidate.index < firstMatch.index) firstMatch = candidate;
+          }
+        }
+      }
+
       if (firstMatch) {
         if (firstMatch.index > 0) {
           parts.push(<span key={`t-${i}-${key++}`}>{remaining.slice(0, firstMatch.index)}</span>);
@@ -263,6 +299,8 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
   const [editText, setEditText] = useState(message.content);
   const [speaking, setSpeaking] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+
+  useEffect(() => { loadCustomEmoji(); }, []);
 
   const isUser = message.role === 'user';
   const isCompanion = message.role === 'companion';
