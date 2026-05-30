@@ -7,9 +7,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.10.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.11.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
-  <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
+  <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white" alt="React" />
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
@@ -262,8 +262,9 @@ Haven works with most AI providers. Pick one:
 | [OpenAI](https://platform.openai.com/api-keys) | Pay as you go | GPT-4o, GPT-5 |
 | [Anthropic](https://console.anthropic.com/) | Pay as you go | Claude models |
 | [xAI](https://console.x.ai/) | Pay as you go | Grok models |
+| [Moonshot](https://platform.moonshot.cn/) | Pay as you go | Kimi / Moonshot models |
 
-Haven auto-detects your provider from the key format. Just paste it in.
+Haven auto-detects your provider from the key format. Just paste it in. Moonshot has a dedicated key field in Settings since its keys share a format with OpenAI.
 
 ---
 
@@ -504,6 +505,11 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**v1.11.0** — Moonshot Direct API Provider
+
+- **Moonshot as first-class provider** — connect directly to Moonshot's API (`api.moonshot.cn`), bypassing OpenRouter entirely. No injected system prompts. Dedicated API key field in Settings.
+- **Auto-fetched model list** — Moonshot models are pulled live from their API when your key is configured, with fallback to v1 8K/32K/128K models.
 
 **v1.10.0** — Per-Model Settings + Thinking Fix
 
