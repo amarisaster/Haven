@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.11.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.12.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -505,6 +505,13 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**v1.12.0** — Custom Emoji, Stickers & Prompt Caching
+
+- **Custom emoji** — upload animated GIFs as custom emoji. Pick them from the new Emoji & Stickers panel in the chat attach menu. Emoji render inline at 48px.
+- **Custom stickers** — upload static images (PNG, WEBP, JPG) as stickers. Pick from the same panel. Stickers send as full-size images in chat.
+- **Management UI** — new Settings section to upload, preview, and delete custom emoji and stickers. Stored in R2, metadata in D1.
+- **Prompt caching toggle** — enable Anthropic prompt caching in Settings to cache system prompts for 5 minutes. Follow-up messages read from cache at 90% lower input cost.
 
 **v1.11.0** — Moonshot Direct API Provider
 

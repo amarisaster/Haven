@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import GifPicker from './GifPicker';
+import StickerPicker from './StickerPicker';
 import { uploadFile, apiBase } from '../lib/api';
 import { extractFileText, isExtractableFile, type ExtractedFile } from '../lib/file-extract';
 
@@ -12,6 +13,7 @@ interface ChatInputProps {
 export default function ChatInput({ onSend, disabled, placeholder = 'Type a message...' }: ChatInputProps) {
   const [text, setText] = useState('');
   const [showGif, setShowGif] = useState(false);
+  const [showStickers, setShowStickers] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [listening, setListening] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -174,6 +176,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     <div style={{ position: 'relative', padding: '8px 12px 12px', background: 'var(--haven-bg)' }}>
       {/* GIF picker above */}
       {showGif && <GifPicker onSelect={handleGifSelect} onClose={() => setShowGif(false)} />}
+      {showStickers && <StickerPicker onSelect={(url) => { setPendingGif(url); setShowStickers(false); inputRef.current?.focus(); }} onClose={() => setShowStickers(false)} />}
 
       {/* Pending image preview */}
       {pendingImage && (
@@ -275,17 +278,15 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
                 Search GIFs
               </button>
               <button
-                onClick={() => setShowAttachMenu(false)}
-                disabled
+                onClick={() => { setShowStickers(!showStickers); setShowAttachMenu(false); }}
                 style={{
                   width: '100%', padding: '10px 14px', background: 'transparent', border: 'none',
-                  color: 'var(--haven-text-muted)', fontSize: '13px',
-                  cursor: 'default', textAlign: 'left', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px',
-                  opacity: 0.5,
+                  color: 'var(--haven-text)', fontSize: '13px',
+                  cursor: 'pointer', textAlign: 'left', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px',
                 }}
               >
-                <span style={{ fontSize: '14px', width: '16px', textAlign: 'center' }}>&#9734;</span>
-                Stickers (coming soon)
+                <span style={{ fontSize: '14px', width: '16px', textAlign: 'center' }}>⭐</span>
+                Emoji & Stickers
               </button>
             </div>
           )}
