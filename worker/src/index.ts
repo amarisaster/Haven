@@ -830,6 +830,14 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
     prompt += `\n`;
   }
 
+  try {
+    const emojiRows = await db.prepare('SELECT name FROM custom_media WHERE type = ? ORDER BY added_at DESC').bind('emoji').all<{ name: string }>();
+    const emojiNames = (emojiRows.results || []).map(e => `:${e.name}:`);
+    if (emojiNames.length > 0) {
+      prompt += `## Custom Emoji\nYou can use these custom emoji in your messages: ${emojiNames.join(' ')}. Write the :name: and it will render as the image.\n\n`;
+    }
+  } catch {}
+
   prompt += `## Current Time\n${now}\n\n`;
 
   // MCP tools stay global (shared across companions per v1.7 decision)
