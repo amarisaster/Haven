@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.9.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.10.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-8+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -497,6 +497,14 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**v1.10.0** — Per-Model Settings + Thinking Fix
+
+- **Per-model settings panel** — tap the gear icon (⚙) on any model in the picker to configure temperature, notes, and a system prompt addition. Temperature slider ranges from 0 (Precise) to 2 (Creative), defaulting to 0.8. Notes are for your own reference. System prompt addition is appended to the companion's system prompt when using that model — useful for per-model formatting instructions.
+- **Settings stored in D1** — model settings persist in your Worker's database, not localStorage. Survives app reinstalls, cache clears, and device switches.
+- **Adaptive thinking for newer Claude models** — Opus 4.6, 4.7, 4.8, and Sonnet 4.6 now use `thinking: { type: 'adaptive' }` when thinking is toggled on. Extended thinking (`budget_tokens`) is reserved for Sonnet 4.5. Previously, all models used extended thinking, which caused 400 errors on newer Opus models.
+- **Temperature restriction for Opus 4.7/4.8** — these models reject the `temperature` parameter entirely. Haven now silently omits it for those models instead of sending 0.8 and getting a 400 error.
+- **Updated fallback model list** — Anthropic direct API fallback now includes Opus 4.8, Opus 4.7, Opus 4.6, and Sonnet 4.6 with correct 1M context lengths. Old Opus 4 and 3.5 Sonnet entries removed.
 
 **v1.9.0** — Production Ready
 
