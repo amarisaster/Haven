@@ -32,6 +32,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [apiKey, setApiKey] = useState('');
   const [apiSaving, setApiSaving] = useState(false);
   const [apiMsg, setApiMsg] = useState('');
+  const [moonshotKey, setMoonshotKey] = useState('');
+  const [moonshotSaving, setMoonshotSaving] = useState(false);
+  const [moonshotMsg, setMoonshotMsg] = useState('');
   const [connectedProviders, setConnectedProviders] = useState<string[]>([]);
   // Per-provider enabled toggles. Each entry is the ENABLED setting key on
   // the worker side (openrouter_enabled, ollama_enabled, custom_enabled).
@@ -99,7 +102,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
   const refreshProviders = () => {
     getSettings().then((s) => {
-      setApiKey(s.openrouter_key || s.ollama_key || s.anthropic_key || s.openai_key || s.groq_key || s.xai_key || s.huggingface_key || s.custom_key || s.ollama_url || '');
+      setApiKey(s.openrouter_key || s.ollama_key || s.anthropic_key || s.openai_key || s.groq_key || s.xai_key || s.huggingface_key || s.moonshot_key || s.custom_key || s.ollama_url || '');
       const connected: string[] = [];
       if (s.openrouter_key) connected.push('OpenRouter');
       if (s.ollama_key || s.ollama_url) connected.push('Ollama');
@@ -108,6 +111,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       if (s.groq_key) connected.push('Groq');
       if (s.xai_key) connected.push('xAI');
       if (s.huggingface_key) connected.push('Hugging Face');
+      if (s.moonshot_key) { connected.push('Moonshot'); setMoonshotKey(s.moonshot_key); }
       if (s.custom_key && !s.anthropic_key && !s.openai_key && !s.groq_key && !s.xai_key && !s.huggingface_key) {
         connected.push(s.provider || 'Custom');
       }
@@ -208,6 +212,21 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       setTimeout(() => setApiMsg(''), 2000);
     } catch { setApiMsg('Error'); }
     setApiSaving(false);
+  };
+
+  const saveMoonshot = async () => {
+    setMoonshotSaving(true);
+    setMoonshotMsg('');
+    try {
+      const k = moonshotKey.trim();
+      const settings: Record<string, string> = { moonshot_key: k };
+      if (k) settings.provider = 'moonshot';
+      await updateSettings(settings);
+      refreshProviders();
+      setMoonshotMsg('Saved');
+      setTimeout(() => setMoonshotMsg(''), 2000);
+    } catch { setMoonshotMsg('Error'); }
+    setMoonshotSaving(false);
   };
 
   const handleAddIdentity = async () => {
@@ -585,7 +604,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', margin: '4px 0 0', lineHeight: '1.4' }}>
             {(() => {
               const k = apiKey.trim();
-              if (!k) return 'Supports: OpenRouter, Ollama, OpenAI, Anthropic, Groq, xAI, or any local URL';
+              if (!k) return 'Supports: OpenRouter, Ollama, OpenAI, Anthropic, Groq, xAI, Moonshot, or any local URL';
               if (k.includes('***')) return connectedProviders.length > 0 ? `Connected: ${connectedProviders.join(', ')}` : 'Key saved';
               if (k.startsWith('hf_')) return 'Hugging Face detected';
               if (k.startsWith('sk-or-')) return 'OpenRouter detected';
@@ -604,6 +623,22 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             {apiSaving ? 'Saving...' : 'Save'}
           </button>
           {apiMsg && <span style={{ fontSize: '12px', color: apiMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{apiMsg}</span>}
+        </div>
+        <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--haven-border)' }}>
+          <label style={labelStyle}>Moonshot API Key</label>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="password"
+              value={moonshotKey}
+              onChange={(e) => setMoonshotKey(e.target.value)}
+              placeholder="Moonshot API key (direct, no OpenRouter)"
+              style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+            />
+            <button onClick={saveMoonshot} disabled={moonshotSaving} style={btnStyle}>
+              {moonshotSaving ? '...' : 'Save'}
+            </button>
+          </div>
+          {moonshotMsg && <span style={{ fontSize: '12px', color: moonshotMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{moonshotMsg}</span>}
         </div>
       </div>
 

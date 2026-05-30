@@ -854,6 +854,7 @@ const PROVIDER_ENDPOINTS: Record<string, { url: string; keyField: string; format
   groq: { url: 'https://api.groq.com/openai/v1', keyField: 'groq_key', format: 'openai' },
   xai: { url: 'https://api.x.ai/v1', keyField: 'xai_key', format: 'openai' },
   huggingface: { url: 'https://router.huggingface.co/v1', keyField: 'huggingface_key', format: 'openai' },
+  moonshot: { url: 'https://api.moonshot.cn/v1', keyField: 'moonshot_key', format: 'openai' },
 };
 
 async function resolveProviderConfig(provider: string, db: D1Database, env: Env): Promise<{ url: string; key: string | null; format: 'openai' | 'anthropic' | 'ollama' }> {
@@ -1259,7 +1260,7 @@ export default {
         if (!message) return json({ error: 'message required' }, 400);
 
         // Whitelist provider to prevent garbage input falling through to untested paths.
-        const ALLOWED_PROVIDERS = ['openrouter', 'ollama', 'openai', 'anthropic', 'groq', 'xai', 'huggingface'];
+        const ALLOWED_PROVIDERS = ['openrouter', 'ollama', 'openai', 'anthropic', 'groq', 'xai', 'huggingface', 'moonshot'];
         if (!ALLOWED_PROVIDERS.includes(provider)) provider = 'openrouter';
 
         // Model-shape override. Ollama slugs look like `name:tag`
@@ -1887,7 +1888,7 @@ export default {
       const ALLOWED_SETTINGS_KEYS = new Set([
         'provider',
         'openrouter_key', 'ollama_url', 'ollama_key',
-        'anthropic_key', 'openai_key', 'groq_key', 'xai_key', 'huggingface_key',
+        'anthropic_key', 'openai_key', 'groq_key', 'xai_key', 'huggingface_key', 'moonshot_key',
         'custom_key', 'custom_base_url',
         'companion_status', 'companion_presence',
         'user_status', 'user_presence',
@@ -2125,6 +2126,26 @@ export default {
                 models.push({ id: m.id, name: m.id, provider: customProvider, tier: 'included' });
               }
             } catch {}
+          }
+        }
+
+        // Add Moonshot models if key is configured
+        const moonshotKey = await getSettingValue(env.DB, 'moonshot_key');
+        if (moonshotKey) {
+          try {
+            const res = await fetch('https://api.moonshot.cn/v1/models', {
+              headers: { 'Authorization': `Bearer ${moonshotKey}` },
+            });
+            const data = await res.json() as any;
+            for (const m of (data.data || [])) {
+              models.push({ id: m.id, name: m.id, provider: 'moonshot', tier: 'included', context_length: m.context_length || undefined });
+            }
+          } catch {
+            models.push(
+              { id: 'moonshot-v1-8k', name: 'Moonshot v1 8K', provider: 'moonshot', tier: 'included', context_length: 8000 },
+              { id: 'moonshot-v1-32k', name: 'Moonshot v1 32K', provider: 'moonshot', tier: 'included', context_length: 32000 },
+              { id: 'moonshot-v1-128k', name: 'Moonshot v1 128K', provider: 'moonshot', tier: 'included', context_length: 128000 },
+            );
           }
         }
 
