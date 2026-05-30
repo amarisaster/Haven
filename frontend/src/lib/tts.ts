@@ -2,7 +2,7 @@
  * Haven TTS — supports browser voices + ElevenLabs
  */
 
-import { apiBase } from './api';
+import { apiBase, authedFetch } from './api';
 
 const LS_VOICE = 'haven-tts-voice';
 const LS_ELEVEN_KEY = 'haven-eleven-key';
@@ -91,7 +91,7 @@ async function speakCloud(text: string, onEnd?: () => void) {
   const base = apiBase();
   if (!base) { onEnd?.(); return; }
   try {
-    const resp = await fetch(`${base}/api/tts`, {
+    const resp = await authedFetch(`${base}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text.slice(0, 1000) }),

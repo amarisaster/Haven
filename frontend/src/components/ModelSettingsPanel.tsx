@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiBase } from '../lib/api';
+import { apiBase, authedFetch } from '../lib/api';
 
 export interface ModelSettings {
   temperature?: number;
@@ -21,7 +21,7 @@ const PROVIDER_EMOJI: Record<string, string> = {
 
 async function fetchSettings(provider: string, modelId: string): Promise<ModelSettings> {
   try {
-    const res = await fetch(`${apiBase()}/api/model-settings?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(modelId)}`);
+    const res = await authedFetch(`${apiBase()}/api/model-settings?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(modelId)}`);
     if (!res.ok) return {};
     return await res.json();
   } catch { return {}; }
@@ -29,7 +29,7 @@ async function fetchSettings(provider: string, modelId: string): Promise<ModelSe
 
 async function saveSettings(provider: string, modelId: string, settings: ModelSettings): Promise<void> {
   try {
-    await fetch(`${apiBase()}/api/model-settings`, {
+    await authedFetch(`${apiBase()}/api/model-settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider, model: modelId, settings }),
