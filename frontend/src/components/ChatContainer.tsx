@@ -6,6 +6,7 @@ import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '..
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
 import ModelSelector from './ModelSelector';
+import ModelSettingsPanel from './ModelSettingsPanel';
 import WallpaperPicker from './WallpaperPicker';
 import AuthMedia from './AuthMedia';
 
@@ -35,6 +36,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const textColor = localStorage.getItem('haven-text-color') || undefined;
   const [showMenu, setShowMenu] = useState(false);
   const [showWallpaper, setShowWallpaper] = useState(false);
+  const [modelSettingsTarget, setModelSettingsTarget] = useState<{ provider: string; modelId: string; modelName: string } | null>(null);
   const [thinking, setThinking] = useState(() => localStorage.getItem('haven-thinking') === 'true');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -447,6 +449,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           selectedModel={selectedModel}
           selectedProvider={selectedProvider}
           onModelChange={handleModelChange}
+          onOpenSettings={(p, id, name) => setModelSettingsTarget({ provider: p, modelId: id, modelName: name })}
         />
 
         {/* Menu button */}
@@ -611,6 +614,16 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         disabled={streamingContent !== null}
         placeholder={threadId ? `Message ${companionName}...` : `Start a new conversation with ${companionName}...`}
       />
+
+      {/* Model settings panel */}
+      {modelSettingsTarget && (
+        <ModelSettingsPanel
+          provider={modelSettingsTarget.provider}
+          modelId={modelSettingsTarget.modelId}
+          modelName={modelSettingsTarget.modelName}
+          onClose={() => setModelSettingsTarget(null)}
+        />
+      )}
 
       {/* Wallpaper picker */}
       {showWallpaper && (
