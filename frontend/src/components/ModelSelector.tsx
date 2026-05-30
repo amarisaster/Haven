@@ -23,6 +23,7 @@ const PROVIDER_EMOJI: Record<string, string> = {
   anthropic: '🎭',
   groq: '⚡',
   xai: '🌀',
+  moonshot: '🌙',
   custom: '🛠️',
 };
 
