@@ -731,7 +731,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {customEmoji.map(e => (
                 <div key={e.id} style={{ position: 'relative', width: '48px', height: '48px', background: 'var(--haven-card)', borderRadius: '8px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img src={`${apiBase()}${e.url}`} alt={e.name} title={e.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px' }} />
+                  <AuthMedia url={`${apiBase()}${e.url}`} type="img" alt={e.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px' }} />
                   <button onClick={() => deleteMedia(e.id)} style={{ position: 'absolute', top: '-6px', right: '-6px', width: '16px', height: '16px', borderRadius: '50%', background: '#ef4444', color: 'white', border: 'none', fontSize: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>x</button>
                 </div>
               ))}
@@ -752,7 +752,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {customStickers.map(s => (
                 <div key={s.id} style={{ position: 'relative', width: '80px', height: '80px', background: 'var(--haven-card)', borderRadius: '8px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img src={`${apiBase()}${s.url}`} alt={s.name} title={s.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px' }} />
+                  <AuthMedia url={`${apiBase()}${s.url}`} type="img" alt={s.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px' }} />
                   <button onClick={() => deleteMedia(s.id)} style={{ position: 'absolute', top: '-6px', right: '-6px', width: '16px', height: '16px', borderRadius: '50%', background: '#ef4444', color: 'white', border: 'none', fontSize: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>x</button>
                 </div>
               ))}
