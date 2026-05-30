@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiBase } from '../lib/api';
+import { apiBase, authedFetch } from '../lib/api';
 import AuthMedia from './AuthMedia';
 
 interface StickerPickerProps {
@@ -25,8 +25,8 @@ export default function StickerPicker({ onSelect, onClose }: StickerPickerProps)
     const base = apiBase();
     setLoading(true);
     Promise.all([
-      fetch(`${base}/api/custom-media?type=emoji`).then(r => r.json()).catch(() => []),
-      fetch(`${base}/api/custom-media?type=sticker`).then(r => r.json()).catch(() => []),
+      authedFetch(`${base}/api/custom-media?type=emoji`).then(r => r.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
+      authedFetch(`${base}/api/custom-media?type=sticker`).then(r => r.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
     ]).then(([e, s]) => {
       setEmoji(e as MediaItem[]);
       setStickers(s as MediaItem[]);
