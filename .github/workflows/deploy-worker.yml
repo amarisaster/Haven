@@ -27,6 +27,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate wrangler.toml
+        run: |
+          cat > wrangler.toml << 'TOML'
+          name = "haven"
+          main = "src/index.ts"
+          compatibility_date = "2025-01-01"
+          compatibility_flags = ["nodejs_compat"]
+          TOML
+
+          if [ -n "$CF_ACCOUNT_ID" ]; then
+            echo "account_id = \"$CF_ACCOUNT_ID\"" >> wrangler.toml
+          fi
+
+          if [ -n "$D1_DATABASE_ID" ]; then
+            cat >> wrangler.toml << TOML
+
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "haven-db"
+          database_id = "$D1_DATABASE_ID"
+          TOML
+          fi
+
+          if [ -n "$R2_BUCKET_NAME" ]; then
+            cat >> wrangler.toml << TOML
+
+          [[r2_buckets]]
+          binding = "FILES"
+          bucket_name = "$R2_BUCKET_NAME"
+          TOML
+          fi
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+
       - name: Deploy to Cloudflare
         run: npx wrangler deploy
         env:

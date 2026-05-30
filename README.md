@@ -236,7 +236,14 @@ After setup, you'll see an orange banner prompting you to secure your Haven with
 
 ### 9. (Optional) Auto-deploy the worker
 
-If you set the `CLOUDFLARE_API_TOKEN` secret in your GitHub fork's repository settings, pushes to `worker/` will auto-deploy via GitHub Actions. Generate an API token at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) with "Workers Scripts: Edit" permission.
+If you set these secrets in your GitHub fork's repository settings, pushes to `worker/` will auto-deploy via GitHub Actions:
+
+| Secret | Required | Where to find it |
+|--------|----------|-------------------|
+| `CLOUDFLARE_API_TOKEN` | Yes | [API Tokens](https://dash.cloudflare.com/profile/api-tokens) — create with "Workers Scripts: Edit" permission |
+| `CLOUDFLARE_ACCOUNT_ID` | Yes | Cloudflare dashboard → sidebar → Account ID |
+| `D1_DATABASE_ID` | Yes | Your `haven-db` database ID from step 3 |
+| `R2_BUCKET_NAME` | No | Defaults to `haven-files` if not set |
 
 That's it. You're home.
 
