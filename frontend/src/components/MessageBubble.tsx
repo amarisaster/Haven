@@ -203,8 +203,14 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string): React.Reac
       case 'text':
         return <div key={k}>{renderFormatted(part.text)}</div>;
       case 'image':
-      case 'gif':
-        return <AuthMedia key={k} url={part.url} type="img" style={{ maxWidth: '280px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />;
+      case 'gif': {
+        const isEmoji = part.url.includes('/api/files/emoji/');
+        return <AuthMedia key={k} url={part.url} type="img" style={{
+          maxWidth: isEmoji ? '48px' : '280px', maxHeight: isEmoji ? '48px' : undefined,
+          borderRadius: isEmoji ? '4px' : '10px', marginTop: '8px',
+          display: isEmoji ? 'inline-block' : 'block', verticalAlign: isEmoji ? 'middle' : undefined,
+        }} />;
+      }
       case 'video':
         return <AuthMedia key={k} url={part.url} type="video" style={{ maxWidth: '320px', borderRadius: '10px', marginTop: '8px', display: 'block' }} />;
       case 'audio':

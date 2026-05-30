@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { Identity } from '../lib/types';
 import AuthMedia from '../components/AuthMedia';
 import {
@@ -35,6 +35,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [moonshotKey, setMoonshotKey] = useState('');
   const [moonshotSaving, setMoonshotSaving] = useState(false);
   const [moonshotMsg, setMoonshotMsg] = useState('');
+  const [anthropicCache, setAnthropicCache] = useState(false);
   const [connectedProviders, setConnectedProviders] = useState<string[]>([]);
   // Per-provider enabled toggles. Each entry is the ENABLED setting key on
   // the worker side (openrouter_enabled, ollama_enabled, custom_enabled).
@@ -42,6 +43,42 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [providerEnabled, setProviderEnabled] = useState<Record<string, boolean>>({
     openrouter: true, ollama: true, custom: true,
   });
+
+  // Custom emoji & stickers
+  const [customEmoji, setCustomEmoji] = useState<Array<{ id: number; name: string; url: string }>>([]);
+  const [customStickers, setCustomStickers] = useState<Array<{ id: number; name: string; url: string }>>([]);
+  const [mediaName, setMediaName] = useState('');
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const emojiFileRef = useRef<HTMLInputElement>(null);
+  const stickerFileRef = useRef<HTMLInputElement>(null);
+
+  const loadCustomMedia = () => {
+    const base = apiBase();
+    Promise.all([
+      fetch(`${base}/api/custom-media?type=emoji`).then(r => r.json()).catch(() => []),
+      fetch(`${base}/api/custom-media?type=sticker`).then(r => r.json()).catch(() => []),
+    ]).then(([e, s]) => { setCustomEmoji(e); setCustomStickers(s); });
+  };
+
+  const uploadMedia = async (file: File, type: 'emoji' | 'sticker') => {
+    const name = mediaName.trim() || file.name.replace(/\.[^.]+$/, '');
+    setMediaUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('name', name);
+      form.append('type', type);
+      await fetch(`${apiBase()}/api/custom-media`, { method: 'POST', body: form });
+      setMediaName('');
+      loadCustomMedia();
+    } catch (e) { console.error('Upload failed:', e); }
+    setMediaUploading(false);
+  };
+
+  const deleteMedia = async (id: number) => {
+    await fetch(`${apiBase()}/api/custom-media/${id}`, { method: 'DELETE' });
+    loadCustomMedia();
+  };
 
   // Chat
   const [fontSize, setFontSize] = useState(() => {
@@ -112,6 +149,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       if (s.xai_key) connected.push('xAI');
       if (s.huggingface_key) connected.push('Hugging Face');
       if (s.moonshot_key) { connected.push('Moonshot'); setMoonshotKey(s.moonshot_key); }
+      setAnthropicCache((s as any).anthropic_cache === 'true');
       if (s.custom_key && !s.anthropic_key && !s.openai_key && !s.groq_key && !s.xai_key && !s.huggingface_key) {
         connected.push(s.provider || 'Custom');
       }
@@ -141,6 +179,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
     }).catch((e) => console.warn('[settings] getUserStatus failed', e));
 
     getStorageUsage().then(setStorage).catch(() => {});
+    loadCustomMedia();
   }, []);
 
   const saveUserStatus = async () => {
@@ -640,10 +679,87 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           </div>
           {moonshotMsg && <span style={{ fontSize: '12px', color: moonshotMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{moonshotMsg}</span>}
         </div>
+        {connectedProviders.includes('Anthropic') && (
+          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--haven-border)' }}>
+            <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={anthropicCache}
+                onChange={async (e) => {
+                  const val = e.target.checked;
+                  setAnthropicCache(val);
+                  await updateSettings({ anthropic_cache: val ? 'true' : 'false' });
+                }}
+                style={{ accentColor: 'var(--haven-accent)' }}
+              />
+              Prompt Caching (Anthropic)
+            </label>
+            <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', margin: '4px 0 0', lineHeight: '1.4' }}>
+              Caches the system prompt for 5 minutes. Follow-up messages read from cache at 90% lower input cost.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* MCP Servers */}
       <McpServersSection apiUrl={apiBase()} />
+
+      {/* Custom Emoji & Stickers */}
+      <div style={sectionStyle}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '16px' }}>Custom Emoji & Stickers</h3>
+
+        <input ref={emojiFileRef} type="file" accept=".gif,.apng,image/gif,image/apng" onChange={e => { const f = e.target.files?.[0]; if (f) uploadMedia(f, 'emoji'); if (emojiFileRef.current) emojiFileRef.current.value = ''; }} className="hidden" />
+        <input ref={stickerFileRef} type="file" accept=".png,.webp,.jpg,.jpeg,image/png,image/webp,image/jpeg" onChange={e => { const f = e.target.files?.[0]; if (f) uploadMedia(f, 'sticker'); if (stickerFileRef.current) stickerFileRef.current.value = ''; }} className="hidden" />
+
+        <div style={{ marginBottom: '12px' }}>
+          <input
+            type="text" value={mediaName} onChange={e => setMediaName(e.target.value)}
+            placeholder="Name (optional)" style={{ ...inputStyle, marginBottom: '8px' }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <label style={labelStyle}>Emoji (animated)</label>
+            <button onClick={() => emojiFileRef.current?.click()} disabled={mediaUploading} style={{ ...btnStyle, fontSize: '12px', padding: '4px 12px' }}>
+              {mediaUploading ? '...' : '+ Add GIF'}
+            </button>
+          </div>
+          {customEmoji.length === 0 ? (
+            <p style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>No custom emoji yet</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {customEmoji.map(e => (
+                <div key={e.id} style={{ position: 'relative', width: '48px', height: '48px', background: 'var(--haven-card)', borderRadius: '8px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <img src={`${apiBase()}${e.url}`} alt={e.name} title={e.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px' }} />
+                  <button onClick={() => deleteMedia(e.id)} style={{ position: 'absolute', top: '-6px', right: '-6px', width: '16px', height: '16px', borderRadius: '50%', background: '#ef4444', color: 'white', border: 'none', fontSize: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>x</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <label style={labelStyle}>Stickers (static)</label>
+            <button onClick={() => stickerFileRef.current?.click()} disabled={mediaUploading} style={{ ...btnStyle, fontSize: '12px', padding: '4px 12px' }}>
+              {mediaUploading ? '...' : '+ Add Image'}
+            </button>
+          </div>
+          {customStickers.length === 0 ? (
+            <p style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>No stickers yet</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {customStickers.map(s => (
+                <div key={s.id} style={{ position: 'relative', width: '80px', height: '80px', background: 'var(--haven-card)', borderRadius: '8px', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <img src={`${apiBase()}${s.url}`} alt={s.name} title={s.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '4px' }} />
+                  <button onClick={() => deleteMedia(s.id)} style={{ position: 'absolute', top: '-6px', right: '-6px', width: '16px', height: '16px', borderRadius: '50%', background: '#ef4444', color: 'white', border: 'none', fontSize: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>x</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Chat */}
       <div style={sectionStyle}>

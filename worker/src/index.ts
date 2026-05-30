@@ -559,6 +559,7 @@ async function inferenceWithTools(
   companionId: number,
   thinking = false,
   temperature?: number,
+  cache = false,
 ): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
@@ -602,7 +603,9 @@ async function inferenceWithTools(
         if (extendedThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
         else body.thinking = { type: 'adaptive' };
       }
-      if (system) body.system = system;
+      if (system) body.system = cache
+        ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+        : system;
       if (openaiTools.length > 0) {
         body.tools = openaiToolsToAnthropic(openaiTools);
         body.tool_choice = { type: 'auto' };
@@ -922,6 +925,7 @@ async function* streamInference(
   env: Env,
   thinking = false,
   temperature?: number,
+  cache = false,
 ): AsyncGenerator<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const resolved = await resolveProviderConfig(provider, env.DB, env);
@@ -958,7 +962,9 @@ async function* streamInference(
       if (extendedThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
       else body.thinking = { type: 'adaptive' };
     }
-    if (system) body.system = system;
+    if (system) body.system = cache
+      ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+      : system;
     response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   } else {
     response = await fetch(url, {
@@ -1124,6 +1130,14 @@ async function ensureMigrations(db: D1Database): Promise<void> {
     console.log(`[MIGRATE] Error during v1.7 migration: ${e}`);
   }
   await ensureReactionsColumn(db);
+  await db.prepare(`CREATE TABLE IF NOT EXISTS custom_media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('emoji', 'sticker')),
+    r2_key TEXT NOT NULL,
+    content_type TEXT,
+    added_at TEXT DEFAULT (datetime('now'))
+  )`).run();
   await db.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (
     ip TEXT NOT NULL, endpoint TEXT NOT NULL, count INTEGER DEFAULT 1,
     window_start TEXT DEFAULT (datetime('now')),
@@ -1311,6 +1325,7 @@ export default {
 
         // Per-model settings (temperature, system prompt addition)
         let cfgTemperature: number | undefined;
+        const cfgCache = provider === 'anthropic' && (await getSettingValue(env.DB, 'anthropic_cache')) === 'true';
         const cfgRaw = await getSettingValue(env.DB, `model_cfg:${provider}:${model}`);
         if (cfgRaw) {
           try {
@@ -1362,7 +1377,7 @@ export default {
               if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
                 // Non-streaming path with function calling
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature);
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache);
                   fullResponse = toolResult.content;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
@@ -1389,14 +1404,14 @@ export default {
                     notice += `Provider error: ${errStr.slice(0, 200)}`;
                   }
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
-                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature)) {
+                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                   }
                 }
               } else {
                 // Stream tokens (no tools)
-                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature)) {
+                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache)) {
                   fullResponse += token;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                 }
@@ -1889,6 +1904,7 @@ export default {
         'provider',
         'openrouter_key', 'ollama_url', 'ollama_key',
         'anthropic_key', 'openai_key', 'groq_key', 'xai_key', 'huggingface_key', 'moonshot_key',
+        'anthropic_cache',
         'custom_key', 'custom_base_url',
         'companion_status', 'companion_presence',
         'user_status', 'user_presence',
@@ -2233,6 +2249,46 @@ export default {
             ..._cors,
           },
         });
+      }
+
+      // ---- Custom Emoji & Stickers ----
+      if (path === '/api/custom-media' && request.method === 'POST') {
+        const formData = await request.formData();
+        const file = formData.get('file') as unknown as File;
+        const name = (formData.get('name') as string || '').trim();
+        const mediaType = (formData.get('type') as string || '').trim();
+        if (!file || !name || !mediaType) return json({ error: 'file, name, type required' }, 400);
+        if (mediaType !== 'emoji' && mediaType !== 'sticker') return json({ error: 'type must be emoji or sticker' }, 400);
+        const maxSize = mediaType === 'emoji' ? 256 * 1024 : 512 * 1024;
+        if (file.size > maxSize) return json({ error: `File too large (max ${maxSize / 1024}KB)` }, 413);
+        const ext = file.name.split('.').pop() || 'bin';
+        const r2Key = `${mediaType}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        await env.FILES.put(r2Key, file.stream(), { httpMetadata: { contentType: file.type } });
+        const result = await env.DB.prepare(
+          'INSERT INTO custom_media (name, type, r2_key, content_type) VALUES (?, ?, ?, ?)'
+        ).bind(name, mediaType, r2Key, file.type || null).run();
+        return json({ id: result.meta.last_row_id, name, type: mediaType, url: `/api/files/${r2Key}` });
+      }
+
+      if (path === '/api/custom-media' && request.method === 'GET') {
+        const mediaType = url.searchParams.get('type') || '';
+        const query = mediaType
+          ? env.DB.prepare('SELECT id, name, type, r2_key FROM custom_media WHERE type = ? ORDER BY added_at DESC').bind(mediaType)
+          : env.DB.prepare('SELECT id, name, type, r2_key FROM custom_media ORDER BY added_at DESC');
+        const rows = await query.all<{ id: number; name: string; type: string; r2_key: string }>();
+        const items = (rows.results || []).map(r => ({ id: r.id, name: r.name, type: r.type, url: `/api/files/${r.r2_key}` }));
+        return json(items);
+      }
+
+      if (path.startsWith('/api/custom-media/') && request.method === 'DELETE') {
+        const id = parseInt(path.split('/').pop() || '');
+        if (isNaN(id)) return json({ error: 'invalid id' }, 400);
+        const row = await env.DB.prepare('SELECT r2_key FROM custom_media WHERE id = ?').bind(id).first<{ r2_key: string }>();
+        if (row) {
+          await env.FILES.delete(row.r2_key);
+          await env.DB.prepare('DELETE FROM custom_media WHERE id = ?').bind(id).run();
+        }
+        return json({ success: true });
       }
 
       // ---- Export Thread (verified against active companion) ----
