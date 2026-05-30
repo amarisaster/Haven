@@ -558,6 +558,7 @@ async function inferenceWithTools(
   tools: McpTool[],
   companionId: number,
   thinking = false,
+  temperature?: number,
 ): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
@@ -593,9 +594,14 @@ async function inferenceWithTools(
     let resp: Response;
     if (isAnthropic) {
       const { system, messages: anthropicMsgs } = buildAnthropicMessages(conversation);
+      const extendedThinking = thinking && /claude-sonnet-4-5/.test(model);
+      const noTemperature = /claude-opus-4-[789]/.test(model);
       const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: false };
-      if (!thinking) body.temperature = 0.8;
-      if (thinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
+      if (!noTemperature) body.temperature = temperature ?? 0.8;
+      if (thinking) {
+        if (extendedThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
+        else body.thinking = { type: 'adaptive' };
+      }
       if (system) body.system = system;
       if (openaiTools.length > 0) {
         body.tools = openaiToolsToAnthropic(openaiTools);
@@ -605,7 +611,7 @@ async function inferenceWithTools(
     } else {
       resp = await fetch(url, {
         method: 'POST', headers,
-        body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: 0.8, stream: false }),
+        body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: temperature ?? 0.8, stream: false }),
       });
     }
 
@@ -914,6 +920,7 @@ async function* streamInference(
   provider: string,
   env: Env,
   thinking = false,
+  temperature?: number,
 ): AsyncGenerator<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const resolved = await resolveProviderConfig(provider, env.DB, env);
@@ -942,9 +949,14 @@ async function* streamInference(
   let response: Response;
   if (isAnthropic) {
     const { system, messages: anthropicMsgs } = buildAnthropicMessages(inferMsgs);
+    const extendedThinking = thinking && /claude-sonnet-4-5/.test(model);
+    const noTemperature = /claude-opus-4-[789]/.test(model);
     const body: any = { model, messages: anthropicMsgs, max_tokens: thinking ? 16000 : 4096, stream: true };
-    if (!thinking) body.temperature = 0.8;
-    if (thinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
+    if (!noTemperature) body.temperature = temperature ?? 0.8;
+    if (thinking) {
+      if (extendedThinking) body.thinking = { type: 'enabled', budget_tokens: 10000 };
+      else body.thinking = { type: 'adaptive' };
+    }
     if (system) body.system = system;
     response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   } else {
@@ -955,7 +967,7 @@ async function* streamInference(
         model,
         messages: inferMsgs,
         stream: true,
-        temperature: 0.8,
+        temperature: temperature ?? 0.8,
       }),
     });
   }
@@ -1294,7 +1306,18 @@ export default {
         ).bind(activeThreadId).all<{ role: string; content: string }>();
 
         // Build system prompt (scoped to active companion)
-        const systemPrompt = await buildSystemPrompt(env.DB, chatCompanionId);
+        let systemPrompt = await buildSystemPrompt(env.DB, chatCompanionId);
+
+        // Per-model settings (temperature, system prompt addition)
+        let cfgTemperature: number | undefined;
+        const cfgRaw = await getSettingValue(env.DB, `model_cfg:${provider}:${model}`);
+        if (cfgRaw) {
+          try {
+            const cfg = JSON.parse(cfgRaw);
+            if (typeof cfg.temperature === 'number') cfgTemperature = cfg.temperature;
+            if (cfg.systemPromptAddition) systemPrompt += `\n\n## Additional Instructions\n${cfg.systemPromptAddition}`;
+          } catch {}
+        }
 
         // Assemble messages
         const historyMessages = (history.results || []).map(m => ({
@@ -1338,7 +1361,7 @@ export default {
               if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
                 // Non-streaming path with function calling
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking);
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature);
                   fullResponse = toolResult.content;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
@@ -1365,14 +1388,14 @@ export default {
                     notice += `Provider error: ${errStr.slice(0, 200)}`;
                   }
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
-                  for await (const token of streamInference(chatMessages, model, provider, env, thinking)) {
+                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                   }
                 }
               } else {
                 // Stream tokens (no tools)
-                for await (const token of streamInference(chatMessages, model, provider, env, thinking)) {
+                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature)) {
                   fullResponse += token;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                 }
@@ -1898,6 +1921,26 @@ export default {
         return json({ success: true });
       }
 
+      // ---- Model Settings (per-model temperature, notes, system prompt addition) ----
+      if (path === '/api/model-settings' && request.method === 'GET') {
+        const p = url.searchParams.get('provider') || '';
+        const m = url.searchParams.get('model') || '';
+        if (!p || !m) return json({});
+        const val = await getSettingValue(env.DB, `model_cfg:${p}:${m}`);
+        try { return json(val ? JSON.parse(val) : {}); } catch { return json({}); }
+      }
+
+      if (path === '/api/model-settings' && request.method === 'PUT') {
+        const body = await request.json() as any;
+        const { provider: p, model: m, settings } = body;
+        if (!p || !m || !settings) return json({ error: 'provider, model, settings required' }, 400);
+        const key = `model_cfg:${p}:${m}`;
+        await env.DB.prepare(
+          'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+        ).bind(key, JSON.stringify(settings)).run();
+        return json({ success: true });
+      }
+
       // ---- Status ---- (scoped per companion since v1.7.2 — one status per
       // companion instead of a global key that multi-companion setups would
       // stomp on each other's writes. Falls back to the old global key for
@@ -2064,10 +2107,12 @@ export default {
             } catch {}
             if (!anthropicLoaded) {
               models.push(
+                { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', provider: 'anthropic', tier: 'included', context_length: 1000000 },
+                { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', provider: 'anthropic', tier: 'included', context_length: 1000000 },
+                { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', tier: 'included', context_length: 1000000 },
+                { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', tier: 'included', context_length: 1000000 },
                 { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', tier: 'included', context_length: 200000 },
                 { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', tier: 'included', context_length: 200000 },
-                { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', provider: 'anthropic', tier: 'included', context_length: 200000 },
-                { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic', tier: 'included', context_length: 200000 },
               );
             }
           } else {

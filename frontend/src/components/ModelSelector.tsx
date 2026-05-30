@@ -6,6 +6,7 @@ interface ModelSelectorProps {
   selectedModel: string;
   selectedProvider: string;
   onModelChange: (model: string, provider: string) => void;
+  onOpenSettings?: (provider: string, modelId: string, modelName: string) => void;
 }
 
 const LS_FAVS = 'haven-fav-models';
@@ -57,7 +58,7 @@ function tierBadge(tier: string) {
 
 type Filter = 'all' | 'free' | 'cloud' | 'paid';
 
-export default function ModelSelector({ selectedModel, selectedProvider, onModelChange }: ModelSelectorProps) {
+export default function ModelSelector({ selectedModel, selectedProvider, onModelChange, onOpenSettings }: ModelSelectorProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [open, setOpen] = useState(false);
@@ -177,6 +178,19 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
             >no 🔧</span>
           )}
           {tierBadge(m.tier)}
+          {onOpenSettings && (
+            <span
+              onClick={(e) => { e.stopPropagation(); onOpenSettings(m.provider, m.id, m.name || m.id); }}
+              title="Model settings"
+              style={{
+                fontSize: '12px', flexShrink: 0, cursor: 'pointer', padding: '2px',
+                color: 'var(--haven-text-muted)', opacity: 0.6,
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = '0.6'; }}
+            >{'\u2699'}</span>
+          )}
         </button>
         {hoveredModel?.id === m.id && hoveredModel?.provider === m.provider && (
           <div style={{
