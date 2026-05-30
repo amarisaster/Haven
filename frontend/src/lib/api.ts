@@ -52,6 +52,11 @@ function scopedHeaders(extra?: Record<string, string>): Record<string, string> {
   return headers;
 }
 
+export function authedFetch(url: string, init?: RequestInit): Promise<Response> {
+  const h = scopedHeaders(init?.headers as Record<string, string> | undefined);
+  return fetch(url, { ...init, headers: h });
+}
+
 async function parseJson<T>(res: Response, path: string): Promise<T> {
   const text = await res.text();
   let parsed: any;

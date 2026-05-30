@@ -5,7 +5,7 @@ import {
   getCompanion, updateCompanion,
   getSettings, updateSettings,
   getIdentity, addIdentity, deleteIdentity,
-  uploadFile, getUserStatus, setUserStatus, apiBase,
+  uploadFile, getUserStatus, setUserStatus, apiBase, authedFetch,
   archiveCompanion, setActiveCompanionId, activeCompanionId,
   exportCompanion, getStorageUsage, clearChatFiles,
   getAuthStatus, generateAuthToken, saveAuthToken, getAuthToken, clearAuthToken, revokeAuthToken,
@@ -55,8 +55,8 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const loadCustomMedia = () => {
     const base = apiBase();
     Promise.all([
-      fetch(`${base}/api/custom-media?type=emoji`).then(r => r.json()).catch(() => []),
-      fetch(`${base}/api/custom-media?type=sticker`).then(r => r.json()).catch(() => []),
+      authedFetch(`${base}/api/custom-media?type=emoji`).then(r => r.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
+      authedFetch(`${base}/api/custom-media?type=sticker`).then(r => r.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
     ]).then(([e, s]) => { setCustomEmoji(e); setCustomStickers(s); });
   };
 
@@ -68,7 +68,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       form.append('file', file);
       form.append('name', name);
       form.append('type', type);
-      await fetch(`${apiBase()}/api/custom-media`, { method: 'POST', body: form });
+      await authedFetch(`${apiBase()}/api/custom-media`, { method: 'POST', body: form });
       setMediaName('');
       loadCustomMedia();
     } catch (e) { console.error('Upload failed:', e); }
@@ -76,7 +76,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   };
 
   const deleteMedia = async (id: number) => {
-    await fetch(`${apiBase()}/api/custom-media/${id}`, { method: 'DELETE' });
+    await authedFetch(`${apiBase()}/api/custom-media/${id}`, { method: 'DELETE' });
     loadCustomMedia();
   };
 
@@ -1101,7 +1101,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       {/* App Info */}
       <div style={sectionStyle}>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>About</h3>
-        <p style={{ fontSize: '13px', color: 'var(--haven-text-secondary)', margin: '0 0 4px' }}>Haven v1.0.0</p>
+        <p style={{ fontSize: '13px', color: 'var(--haven-text-secondary)', margin: '0 0 4px' }}>Haven v1.12.0</p>
         <p style={{ fontSize: '12px', color: 'var(--haven-text-muted)', margin: 0 }}>Haven — self-hosted companion chat</p>
       </div>
 
