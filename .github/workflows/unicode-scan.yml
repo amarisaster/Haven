@@ -1,0 +1,50 @@
+name: Unicode Injection Scan
+
+on:
+  push:
+    paths:
+      - '**/*.md'
+      - '.cursorrules'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '.cursorrules'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for invisible Unicode injection
+        run: |
+          echo "Scanning model-facing files for invisible/malicious Unicode..."
+
+          # Zero-width, bidi controls, interlinear annotation, Unicode Tags (ASCII smuggling)
+          PATTERN='[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2064}\x{2066}-\x{206F}\x{FEFF}\x{FFF9}-\x{FFFB}\x{00AD}]|[\x{E0000}-\x{E007F}]'
+
+          FOUND=0
+          while IFS= read -r file; do
+            # Allow BOM (U+FEFF) at byte 0 only — strip first char before scanning
+            HITS=$(tail -c +4 "$file" 2>/dev/null | grep -Pn "$PATTERN" || true)
+            if [ -n "$HITS" ]; then
+              echo "::error file=$file::Invisible Unicode characters detected in $file"
+              echo "$HITS" | while IFS= read -r line; do
+                echo "  $file:$line"
+              done
+              FOUND=1
+            fi
+          done < <(find . -type f \( -name '*.md' -o -name '.cursorrules' -o -name 'AGENTS.md' -o -name 'CLAUDE.md' \) -not -path '*/node_modules/*' -not -path '*/.git/*')
+
+          if [ "$FOUND" = "1" ]; then
+            echo ""
+            echo "::error::BLOCKED — Invisible Unicode injection detected. See above for affected files and lines."
+            echo "This may be a TrapDoor-style attack embedding hidden instructions in model-facing files."
+            exit 1
+          fi
+
+          echo "Clean — no invisible Unicode injection found."
