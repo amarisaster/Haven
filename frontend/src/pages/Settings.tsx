@@ -36,7 +36,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
   const [moonshotKey, setMoonshotKey] = useState('');
   const [moonshotSaving, setMoonshotSaving] = useState(false);
   const [moonshotMsg, setMoonshotMsg] = useState('');
-  const [anthropicCache, setAnthropicCache] = useState(false);
+  const [anthropicCache, setAnthropicCache] = useState<string>('false');
   const [connectedProviders, setConnectedProviders] = useState<string[]>([]);
   // Per-provider enabled toggles. Each entry is the ENABLED setting key on
   // the worker side (openrouter_enabled, ollama_enabled, custom_enabled).
@@ -153,7 +153,8 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       if (s.xai_key) connected.push('xAI');
       if (s.huggingface_key) connected.push('Hugging Face');
       if (s.moonshot_key) { connected.push('Moonshot'); setMoonshotKey(s.moonshot_key); }
-      setAnthropicCache((s as any).anthropic_cache === 'true');
+      const ac = (s as any).anthropic_cache;
+      setAnthropicCache(ac === 'true' ? '5min' : ac === '5min' || ac === '1h' ? ac : 'false');
       if (s.custom_key && !s.anthropic_key && !s.openai_key && !s.groq_key && !s.xai_key && !s.huggingface_key) {
         connected.push(s.provider || 'Custom');
       }
@@ -687,21 +688,26 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
         </div>
         {connectedProviders.includes('Anthropic') && (
           <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--haven-border)' }}>
-            <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={anthropicCache}
-                onChange={async (e) => {
-                  const val = e.target.checked;
-                  setAnthropicCache(val);
-                  await updateSettings({ anthropic_cache: val ? 'true' : 'false' });
-                }}
-                style={{ accentColor: 'var(--haven-accent)' }}
-              />
-              Prompt Caching (Anthropic)
-            </label>
+            <label style={labelStyle}>Prompt Caching (Anthropic)</label>
+            <select
+              value={anthropicCache}
+              onChange={async (e) => {
+                const val = e.target.value;
+                setAnthropicCache(val);
+                await updateSettings({ anthropic_cache: val });
+              }}
+              style={{
+                width: '100%', padding: '8px 12px', borderRadius: '8px',
+                border: '1px solid var(--haven-border)', background: 'var(--haven-card)',
+                color: 'var(--haven-text)', fontSize: '13px', marginTop: '4px',
+              }}
+            >
+              <option value="false">Off</option>
+              <option value="5min">5 minutes (1.25x write, saves after 1 re-read)</option>
+              <option value="1h">1 hour (2x write, saves after 2 re-reads)</option>
+            </select>
             <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', margin: '4px 0 0', lineHeight: '1.4' }}>
-              Caches the system prompt for 5 minutes. Follow-up messages read from cache at 90% lower input cost.
+              Caches the system prompt so follow-up messages read from cache at 90% lower input cost.
             </p>
           </div>
         )}
