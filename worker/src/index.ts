@@ -2218,6 +2218,15 @@ export default {
           }
         }
 
+        const VISION_PATTERNS = /vision|vl|-v\b|4o|gemini|claude-3|claude-opus|claude-sonnet-4|claude-haiku|llava|pixtral|gpt-4-turbo|gpt-4\.1/i;
+        const THINKING_PATTERNS = /thinking|reasoner|deepseek-r1|qwq|o1-|o3-|o4-|kimi.*thinking|claude-opus/i;
+        const TOOLS_PATTERNS = /gpt-4|gpt-3\.5|claude|gemini|command-r|mistral-large|mistral-medium|llama-3|qwen|deepseek-v|glm/i;
+        for (const m of models) {
+          if (m.supports_vision === undefined) m.supports_vision = VISION_PATTERNS.test(m.id) || undefined;
+          if (m.supports_thinking === undefined) m.supports_thinking = THINKING_PATTERNS.test(m.id) || undefined;
+          if (m.supports_tools === undefined) m.supports_tools = TOOLS_PATTERNS.test(m.id) || undefined;
+        }
+
         return json(models);
       }
 
