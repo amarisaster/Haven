@@ -91,8 +91,9 @@ export default function App() {
       } else if (!localStorage.getItem('haven-setup-done')) {
         setNeedsSetup(true);
       }
-    } catch {
-      if (!localStorage.getItem('haven-setup-done')) setNeedsSetup(true);
+    } catch (e) {
+      const is401 = e instanceof Error && e.message.includes('401');
+      if (!is401 && !localStorage.getItem('haven-setup-done')) setNeedsSetup(true);
     }
   }, []);
 
