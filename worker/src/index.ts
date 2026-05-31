@@ -31,14 +31,9 @@ function json(data: unknown, status = 200) {
   });
 }
 
-// Auth token cache — avoids D1 read on every request
-let _authToken: string | null | undefined = undefined;
 async function getAuthToken(db: D1Database): Promise<string | null> {
-  if (_authToken !== undefined) return _authToken;
-  _authToken = await getSettingValue(db, 'auth_token') || null;
-  return _authToken;
+  return await getSettingValue(db, 'auth_token') || null;
 }
-function invalidateAuthTokenCache() { _authToken = undefined; }
 
 async function ensureReactionsColumn(db: D1Database) {
   try { await db.prepare("ALTER TABLE messages ADD COLUMN reactions TEXT").run(); } catch { /* already exists */ }
@@ -861,7 +856,7 @@ async function getSettingValue(db: D1Database, key: string): Promise<string | nu
 
 const PROVIDER_ENDPOINTS: Record<string, { url: string; keyField: string; format: 'openai' | 'anthropic' | 'ollama' }> = {
   openai: { url: 'https://api.openai.com/v1', keyField: 'openai_key', format: 'openai' },
-  anthropic: { url: 'https://api.anthropic.com', keyField: 'anthropic_key', format: 'anthropic' },
+  anthropic: { url: 'https://api.anthropic.com/v1', keyField: 'anthropic_key', format: 'anthropic' },
   groq: { url: 'https://api.groq.com/openai/v1', keyField: 'groq_key', format: 'openai' },
   xai: { url: 'https://api.x.ai/v1', keyField: 'xai_key', format: 'openai' },
   huggingface: { url: 'https://router.huggingface.co/v1', keyField: 'huggingface_key', format: 'openai' },
@@ -1245,7 +1240,6 @@ export default {
         }
         const token = crypto.randomUUID() + '-' + crypto.randomUUID();
         await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('auth_token', token).run();
-        invalidateAuthTokenCache();
         return json({ token });
       }
 
@@ -1256,7 +1250,6 @@ export default {
           if (bearer !== existing) return json({ error: 'Unauthorized' }, 401);
         }
         await env.DB.prepare('DELETE FROM settings WHERE key = ?').bind('auth_token').run();
-        invalidateAuthTokenCache();
         return json({ success: true });
       }
 
