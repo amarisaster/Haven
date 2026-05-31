@@ -1963,7 +1963,7 @@ export default {
         const ALLOWED_PREF_KEYS = new Set([
           'user-name', 'user-avatar', 'user-status',
           'font-size', 'font-family', 'text-color', 'wallpaper',
-          'tts-mode', 'thinking',
+          'tts-mode', 'thinking', 'fav-models',
         ]);
         const stmts: D1PreparedStatement[] = [];
         for (const [key, value] of Object.entries(body)) {

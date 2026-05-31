@@ -34,7 +34,9 @@ function getFavorites(): Set<string> {
 }
 
 function saveFavorites(favs: Set<string>) {
-  localStorage.setItem(LS_FAVS, JSON.stringify([...favs]));
+  const val = JSON.stringify([...favs]);
+  localStorage.setItem(LS_FAVS, val);
+  import('../lib/api').then(({ pushPreference }) => pushPreference('fav-models', val)).catch(() => {});
 }
 
 function tierBadge(tier: string) {
