@@ -80,6 +80,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
     loadCustomMedia();
   };
 
+  // Worker URL
+  const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('haven-api-url') || '');
+
   // Chat
   const [fontSize, setFontSize] = useState(() => {
     const saved = localStorage.getItem('haven-font-size');
@@ -362,10 +365,12 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           <input
             type="text"
             placeholder="https://your-haven-worker.workers.dev"
-            value={localStorage.getItem('haven-api-url') || ''}
+            value={workerUrl}
             onChange={(e) => {
-              const val = e.target.value.trim();
-              if (val) localStorage.setItem('haven-api-url', val);
+              const val = e.target.value;
+              setWorkerUrl(val);
+              const trimmed = val.trim();
+              if (trimmed) localStorage.setItem('haven-api-url', trimmed);
               else localStorage.removeItem('haven-api-url');
             }}
             style={inputStyle}
