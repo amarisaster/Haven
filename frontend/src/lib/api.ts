@@ -244,7 +244,7 @@ export const updateSettings = (data: Record<string, string>) => put('/api/settin
 const PREF_KEYS = [
   'user-name', 'user-avatar', 'user-status',
   'font-size', 'font-family', 'text-color', 'wallpaper',
-  'tts-mode', 'thinking', 'fav-models',
+  'tts-mode', 'thinking', 'fav-models', 'setup-done',
 ] as const;
 
 export async function pullPreferences(): Promise<void> {

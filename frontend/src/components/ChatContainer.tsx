@@ -490,7 +490,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         const maxLabel = ctxMax >= 1000000 ? `${(ctxMax / 1000000).toFixed(1)}M` : `${Math.round(ctxMax / 1000)}k`;
         return (
           <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            display: 'flex', alignItems: 'center',
             padding: '3px 12px', background: 'var(--haven-surface)', borderBottom: '1px solid var(--haven-border)',
             fontSize: '10px', flexShrink: 0, opacity: 0.9, position: 'relative', zIndex: 20,
           }}>
@@ -503,14 +503,15 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               style={{
                 background: 'transparent', border: 'none', cursor: 'pointer',
                 color: 'var(--haven-text-secondary)', fontSize: '10px', padding: 0,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '40%',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                flex: 1, textAlign: 'left', minWidth: 0,
               }}
             >
               {currentModel?.name || selectedModel.split('/').pop()?.replace(':free', '') || selectedModel}
             </button>
 
             {/* Center: model selector + thinking + menu */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
               <ModelSelector
                 selectedModel={selectedModel}
                 selectedProvider={selectedProvider}

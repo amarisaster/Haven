@@ -555,6 +555,7 @@ async function inferenceWithTools(
   thinking = false,
   temperature?: number,
   cache = false,
+  cacheTtl?: string,
 ): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
@@ -599,7 +600,7 @@ async function inferenceWithTools(
         else body.thinking = { type: 'adaptive' };
       }
       if (system) body.system = cache
-        ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+        ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ...(cacheTtl && { ttl: cacheTtl }) } }]
         : system;
       if (openaiTools.length > 0) {
         body.tools = openaiToolsToAnthropic(openaiTools);
@@ -929,6 +930,7 @@ async function* streamInference(
   thinking = false,
   temperature?: number,
   cache = false,
+  cacheTtl?: string,
 ): AsyncGenerator<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const resolved = await resolveProviderConfig(provider, env.DB, env);
@@ -966,7 +968,7 @@ async function* streamInference(
       else body.thinking = { type: 'adaptive' };
     }
     if (system) body.system = cache
-      ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+      ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ...(cacheTtl && { ttl: cacheTtl }) } }]
       : system;
     response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   } else {
@@ -1337,7 +1339,9 @@ export default {
 
         // Per-model settings (temperature, system prompt addition)
         let cfgTemperature: number | undefined;
-        const cfgCache = provider === 'anthropic' && (await getSettingValue(env.DB, 'anthropic_cache')) === 'true';
+        const cacheVal = provider === 'anthropic' ? (await getSettingValue(env.DB, 'anthropic_cache')) : null;
+        const cfgCache = cacheVal === 'true' || cacheVal === '5min' || cacheVal === '1h';
+        const cfgCacheTtl = cacheVal === '1h' ? '1h' : undefined;
         const cfgRaw = await getSettingValue(env.DB, `model_cfg:${provider}:${model}`);
         if (cfgRaw) {
           try {
@@ -1389,7 +1393,7 @@ export default {
               if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
                 // Non-streaming path with function calling
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache);
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache, cfgCacheTtl);
                   fullResponse = toolResult.content;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
@@ -1416,14 +1420,14 @@ export default {
                     notice += `Provider error: ${errStr.slice(0, 200)}`;
                   }
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
-                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache)) {
+                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                   }
                 }
               } else {
                 // Stream tokens (no tools)
-                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache)) {
+                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl)) {
                   fullResponse += token;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                 }
@@ -1963,7 +1967,7 @@ export default {
         const ALLOWED_PREF_KEYS = new Set([
           'user-name', 'user-avatar', 'user-status',
           'font-size', 'font-family', 'text-color', 'wallpaper',
-          'tts-mode', 'thinking', 'fav-models',
+          'tts-mode', 'thinking', 'fav-models', 'setup-done',
         ]);
         const stmts: D1PreparedStatement[] = [];
         for (const [key, value] of Object.entries(body)) {
