@@ -626,6 +626,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           provider={modelSettingsTarget.provider}
           modelId={modelSettingsTarget.modelId}
           modelName={modelSettingsTarget.modelName}
+          model={models.find(m => m.id === modelSettingsTarget.modelId && m.provider === modelSettingsTarget.provider)}
           onClose={() => setModelSettingsTarget(null)}
         />
       )}

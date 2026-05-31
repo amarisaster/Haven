@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { ModelInfo } from '../lib/types';
 import { apiBase, authedFetch } from '../lib/api';
 
 export interface ModelSettings {
@@ -11,6 +12,7 @@ interface Props {
   provider: string;
   modelId: string;
   modelName: string;
+  model?: ModelInfo | null;
   onClose: () => void;
 }
 
@@ -37,7 +39,7 @@ async function saveSettings(provider: string, modelId: string, settings: ModelSe
   } catch {}
 }
 
-export default function ModelSettingsPanel({ provider, modelId, modelName, onClose }: Props) {
+export default function ModelSettingsPanel({ provider, modelId, modelName, model, onClose }: Props) {
   const [settings, setSettings] = useState<ModelSettings>({});
   const [loaded, setLoaded] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,6 +92,12 @@ export default function ModelSettingsPanel({ provider, modelId, modelName, onClo
     resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box',
   };
 
+  const pillStyle = (color: string): React.CSSProperties => ({
+    fontSize: '9px', fontWeight: 600, padding: '2px 6px', borderRadius: '6px',
+    background: `${color}22`, color, border: `1px solid ${color}44`,
+    whiteSpace: 'nowrap',
+  });
+
   if (!loaded) return null;
 
   return (
@@ -112,6 +120,14 @@ export default function ModelSettingsPanel({ provider, modelId, modelName, onClo
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--haven-text, #eee)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{modelName}</div>
                 <div style={{ fontSize: '10px', color: 'var(--haven-text-secondary, #888)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider} · {modelId}</div>
+                {model && (
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
+                    {model.supports_tools === true && <span style={pillStyle('#8b5cf6')}>🔧 Tools</span>}
+                    {model.supports_vision === true && <span style={pillStyle('#3b82f6')}>👁 Vision</span>}
+                    {model.supports_thinking === true && <span style={pillStyle('#f59e0b')}>🧠 Thinking</span>}
+                    {model.context_length && <span style={pillStyle('#6b7280')}>{model.context_length >= 1000000 ? `${(model.context_length / 1000000).toFixed(1)}M` : `${Math.round(model.context_length / 1000)}k`} ctx</span>}
+                  </div>
+                )}
               </div>
               <button
                 onClick={onClose}
