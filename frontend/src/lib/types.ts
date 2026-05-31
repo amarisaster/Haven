@@ -69,5 +69,7 @@ export interface ModelInfo {
   tier: string;
   description?: string;
   context_length?: number;
-  supports_tools?: boolean; // undefined = unknown; true/false = confirmed
+  supports_tools?: boolean;
+  supports_vision?: boolean;
+  supports_thinking?: boolean;
 }

@@ -2067,7 +2067,7 @@ export default {
 
       // ---- Models ----
       if (path === '/api/models' && request.method === 'GET') {
-        const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number; supports_tools?: boolean }> = [];
+        const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number; supports_tools?: boolean; supports_vision?: boolean; supports_thinking?: boolean }> = [];
         // Per-provider toggles suppress that provider's models from the
         // picker entirely when disabled.
         const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
@@ -2090,9 +2090,11 @@ export default {
               // 'tools' isn't in there, tool calling will 404 for every
               // provider route. We surface this to the picker so users
               // don't pick Gemma-on-OR expecting tool use.
-              const supportsTools = Array.isArray(m.supported_parameters)
-                ? m.supported_parameters.includes('tools')
-                : undefined;
+              const sp = Array.isArray(m.supported_parameters) ? m.supported_parameters : [];
+              const supportsTools = sp.length > 0 ? sp.includes('tools') : undefined;
+              const supportsThinking = sp.length > 0 ? sp.includes('reasoning') : undefined;
+              const modality = m.architecture?.modality || '';
+              const supportsVision = modality.includes('image') || modality.includes('multimodal') || undefined;
               models.push({
                 id: m.id,
                 name: m.name || m.id,
@@ -2101,6 +2103,8 @@ export default {
                 description: m.description || undefined,
                 context_length: m.context_length || undefined,
                 supports_tools: supportsTools,
+                supports_vision: supportsVision === true ? true : undefined,
+                supports_thinking: supportsThinking === true ? true : undefined,
               });
             }
           }
