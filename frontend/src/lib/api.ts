@@ -240,6 +240,49 @@ export const getModels = () => get<ModelInfo[]>('/api/models');
 export const getSettings = () => get<Record<string, string>>('/api/settings');
 export const updateSettings = (data: Record<string, string>) => put('/api/settings', data);
 
+// User Preferences (synced across devices)
+const PREF_KEYS = [
+  'user-name', 'user-avatar', 'user-status',
+  'font-size', 'font-family', 'text-color', 'wallpaper',
+  'tts-mode', 'thinking',
+] as const;
+
+export async function pullPreferences(): Promise<void> {
+  try {
+    const prefs = await get<Record<string, string>>('/api/preferences');
+    const serverHasData = Object.keys(prefs).length > 0;
+    if (serverHasData) {
+      for (const key of PREF_KEYS) {
+        const lsKey = `haven-${key}`;
+        if (prefs[key]) localStorage.setItem(lsKey, prefs[key]);
+      }
+    } else {
+      await pushAllPreferences();
+    }
+  } catch {}
+}
+
+export async function pushPreference(key: string, value: string): Promise<void> {
+  localStorage.setItem(`haven-${key}`, value);
+  try { await put('/api/preferences', { [key]: value }); } catch {}
+}
+
+export async function removePreference(key: string): Promise<void> {
+  localStorage.removeItem(`haven-${key}`);
+  try { await put('/api/preferences', { [key]: '' }); } catch {}
+}
+
+export async function pushAllPreferences(): Promise<void> {
+  const prefs: Record<string, string> = {};
+  for (const key of PREF_KEYS) {
+    const val = localStorage.getItem(`haven-${key}`);
+    if (val) prefs[key] = val;
+  }
+  if (Object.keys(prefs).length > 0) {
+    try { await put('/api/preferences', prefs); } catch {}
+  }
+}
+
 // Status
 export const getCompanionStatus = () => get<{ custom_status: string | null; presence: string }>('/api/status');
 export const setCompanionStatus = (data: { custom_status?: string; presence?: string }) => put('/api/status', data);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, Component, type ReactNode } from 'react';
-import { getCompanion, setActiveCompanionId, activeCompanionId } from './lib/api';
+import { getCompanion, setActiveCompanionId, activeCompanionId, pullPreferences } from './lib/api';
 import { persistSet } from './lib/storage';
 import ThreadList from './components/ThreadList';
 import ChatContainer from './components/ChatContainer';
@@ -98,7 +98,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshActiveCompanion().finally(() => setLoaded(true));
+    refreshActiveCompanion().then(() => pullPreferences()).finally(() => setLoaded(true));
   }, [refreshActiveCompanion]);
 
   // Handle browser back button

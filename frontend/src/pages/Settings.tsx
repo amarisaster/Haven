@@ -9,6 +9,7 @@ import {
   archiveCompanion, setActiveCompanionId, activeCompanionId,
   exportCompanion, getStorageUsage, clearChatFiles,
   getAuthStatus, generateAuthToken, saveAuthToken, getAuthToken, clearAuthToken, revokeAuthToken,
+  pushPreference, removePreference,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
@@ -286,12 +287,12 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
   const handleFontChange = (val: number) => {
     setFontSize(val);
-    localStorage.setItem('haven-font-size', String(val));
+    pushPreference('font-size', String(val));
   };
 
   const handleWallpaperChange = (val: string) => {
     setWallpaper(val);
-    localStorage.setItem('haven-wallpaper', val);
+    pushPreference('wallpaper', val);
   };
 
   const sectionStyle: React.CSSProperties = {
@@ -398,8 +399,8 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             defaultValue={localStorage.getItem('haven-user-name') || ''}
             onBlur={(e) => {
               const val = e.target.value.trim();
-              if (val) localStorage.setItem('haven-user-name', val);
-              else localStorage.removeItem('haven-user-name');
+              if (val) pushPreference('user-name', val);
+              else removePreference('user-name');
             }}
             style={inputStyle}
           />
@@ -422,7 +423,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = () => {
-                  localStorage.setItem('haven-user-avatar', reader.result as string);
+                  pushPreference('user-avatar', reader.result as string);
                   window.location.reload();
                 };
                 reader.readAsDataURL(file);
@@ -431,7 +432,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             <span style={{ fontSize: '11px', color: 'var(--haven-text-muted)' }}>Tap to upload</span>
             {localStorage.getItem('haven-user-avatar') && (
               <button
-                onClick={() => { localStorage.removeItem('haven-user-avatar'); window.location.reload(); }}
+                onClick={() => { removePreference('user-avatar'); window.location.reload(); }}
                 style={{ fontSize: '11px', color: '#f87171', background: 'transparent', border: 'none', cursor: 'pointer' }}
               >Remove</button>
             )}
@@ -791,7 +792,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             ].map((f) => (
               <button
                 key={f.label}
-                onClick={() => { setFontFamily(f.value); localStorage.setItem('haven-font-family', f.value); }}
+                onClick={() => { setFontFamily(f.value); pushPreference('font-family', f.value); }}
                 style={{
                   padding: '6px 12px', borderRadius: '8px', fontSize: '12px', cursor: 'pointer',
                   fontFamily: f.value === 'System' ? 'inherit' : f.value,
@@ -816,7 +817,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             ].map((c) => (
               <button
                 key={c.label}
-                onClick={() => { setTextColor(c.value); localStorage.setItem('haven-text-color', c.value); }}
+                onClick={() => { setTextColor(c.value); pushPreference('text-color', c.value); }}
                 style={{
                   padding: '6px 12px', borderRadius: '8px', fontSize: '12px', cursor: 'pointer',
                   background: textColor === c.value ? (c.value || 'var(--haven-accent)') : 'var(--haven-card)',
@@ -828,7 +829,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
             <input
               type="color"
               value={textColor || '#e7e5e4'}
-              onChange={(e) => { setTextColor(e.target.value); localStorage.setItem('haven-text-color', e.target.value); }}
+              onChange={(e) => { setTextColor(e.target.value); pushPreference('text-color', e.target.value); }}
               style={{ width: '28px', height: '28px', border: 'none', background: 'transparent', cursor: 'pointer' }}
               title="Custom color"
             />
