@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, ToolCallRecord } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage } from '../lib/api';
+import type { ModelInfo } from '../lib/types';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
 import ChatMessages from './ChatMessages';
@@ -42,6 +43,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [error, setError] = useState<string | null>(null);
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [userStatus, setUserStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const sendingRef = useRef(false);
 
@@ -62,6 +64,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     const interval = setInterval(poll, 30000);
     return () => { active = false; clearInterval(interval); };
   }, []);
+
+  useEffect(() => { getModels().then(m => setModels(Array.isArray(m) ? m : [])).catch(() => {}); }, []);
 
   // Load messages when thread changes. Skip if a send is in progress —
   // new-thread creation updates threadId mid-stream and we must not abort
@@ -89,7 +93,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   useEffect(() => { loadWallpaper(wpKey).then(setWallpaper); }, [wpKey]);
   useEffect(() => { localStorage.setItem(LS_MODEL, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(LS_PROVIDER, selectedProvider); }, [selectedProvider]);
-  useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); }, [thinking]);
+  useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); pushPreference('thinking', String(thinking)); }, [thinking]);
 
   const handleModelChange = (model: string, provider: string) => {
     setSelectedModel(model);
@@ -445,98 +449,6 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        <ModelSelector
-          selectedModel={selectedModel}
-          selectedProvider={selectedProvider}
-          onModelChange={handleModelChange}
-          onOpenSettings={(p, id, name) => setModelSettingsTarget({ provider: p, modelId: id, modelName: name })}
-        />
-
-        {/* Menu button */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowMenu(!showMenu)}
-            style={{
-              background: 'transparent', border: 'none', cursor: 'pointer',
-              color: 'var(--haven-text-secondary)', fontSize: '18px', padding: '4px 8px',
-            }}
-          >&#8942;</button>
-
-          {showMenu && (
-            <div style={{
-              position: 'absolute', top: '100%', right: 0, marginTop: '4px',
-              background: 'var(--haven-surface)', border: '1px solid var(--haven-border)',
-              borderRadius: '10px', padding: '6px', minWidth: '160px', zIndex: 50,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-            }}>
-              {/* Font size */}
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '6px 8px',
-              }}>
-                <span style={{ fontSize: '12px', color: 'var(--haven-text-secondary)' }}>Font Size</span>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button
-                    onClick={() => adjustFont(-1)}
-                    style={{
-                      width: '28px', height: '28px', borderRadius: '6px',
-                      border: '1px solid var(--haven-border)', background: 'var(--haven-card)',
-                      color: 'var(--haven-text)', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-                    }}
-                  >A-</button>
-                  <button
-                    onClick={() => adjustFont(1)}
-                    style={{
-                      width: '28px', height: '28px', borderRadius: '6px',
-                      border: '1px solid var(--haven-border)', background: 'var(--haven-card)',
-                      color: 'var(--haven-text)', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-                    }}
-                  >A+</button>
-                </div>
-              </div>
-
-              {/* Wallpaper */}
-              <button
-                onClick={() => { setShowWallpaper(true); setShowMenu(false); }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
-                  padding: '6px 8px', background: 'transparent', border: 'none',
-                  color: 'var(--haven-text-secondary)', fontSize: '12px', cursor: 'pointer',
-                  borderRadius: '6px', textAlign: 'left',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--haven-card)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-              >
-                🎨 Wallpaper
-              </button>
-
-              {/* Extended thinking toggle */}
-              <div
-                onClick={() => setThinking(!thinking)}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '6px 8px', cursor: 'pointer', borderRadius: '6px',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--haven-card)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-              >
-                <span style={{ fontSize: '12px', color: 'var(--haven-text-secondary)' }}>🧠 Thinking</span>
-                <div style={{
-                  width: '32px', height: '18px', borderRadius: '9px',
-                  background: thinking ? 'var(--haven-accent)' : 'var(--haven-border)',
-                  position: 'relative', transition: 'background 0.2s',
-                }}>
-                  <div style={{
-                    width: '14px', height: '14px', borderRadius: '50%',
-                    background: 'white', position: 'absolute', top: '2px',
-                    left: thinking ? '16px' : '2px', transition: 'left 0.2s',
-                  }} />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* User (right) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
           <div style={{ minWidth: 0, textAlign: 'right' }}>
@@ -566,6 +478,99 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           </div>
         </div>
       </div>
+
+      {/* Slim model bar */}
+      {(() => {
+        const currentModel = models.find(m => m.id === selectedModel && m.provider === selectedProvider);
+        const ctxMax = currentModel?.context_length || 128000;
+        const est = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+        const pct = ctxMax > 0 ? est / ctxMax : 0;
+        const tokenColor = pct > 0.8 ? '#f87171' : pct > 0.5 ? '#facc15' : 'var(--haven-text-muted)';
+        const tokenLabel = est < 1000 ? `~${est}` : `~${(est / 1000).toFixed(1)}k`;
+        const maxLabel = ctxMax >= 1000000 ? `${(ctxMax / 1000000).toFixed(1)}M` : `${Math.round(ctxMax / 1000)}k`;
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '3px 12px', background: 'var(--haven-surface)', borderBottom: '1px solid var(--haven-border)',
+            fontSize: '10px', flexShrink: 0, opacity: 0.9,
+          }}>
+            {/* Left: model name → tap for settings */}
+            <button
+              onClick={() => {
+                const name = currentModel?.name || selectedModel.split('/').pop()?.replace(':free', '') || selectedModel;
+                setModelSettingsTarget({ provider: selectedProvider, modelId: selectedModel, modelName: name });
+              }}
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'var(--haven-text-secondary)', fontSize: '10px', padding: 0,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '40%',
+              }}
+            >
+              {currentModel?.name || selectedModel.split('/').pop()?.replace(':free', '') || selectedModel}
+            </button>
+
+            {/* Center: model selector + thinking + menu */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <ModelSelector
+                selectedModel={selectedModel}
+                selectedProvider={selectedProvider}
+                onModelChange={handleModelChange}
+                onOpenSettings={(p, id, name) => setModelSettingsTarget({ provider: p, modelId: id, modelName: name })}
+              />
+              {/* Thinking toggle */}
+              <button
+                onClick={() => setThinking(!thinking)}
+                title={thinking ? 'Thinking ON' : 'Thinking OFF'}
+                style={{
+                  background: thinking ? 'var(--haven-accent)' : 'transparent',
+                  border: thinking ? 'none' : '1px solid var(--haven-border)',
+                  borderRadius: '4px', padding: '2px 5px', cursor: 'pointer',
+                  fontSize: '10px', color: thinking ? 'white' : 'var(--haven-text-muted)',
+                  lineHeight: 1,
+                }}
+              >🧠</button>
+              {/* Menu */}
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setShowMenu(!showMenu)}
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'var(--haven-text-muted)', fontSize: '14px', padding: '2px 4px', lineHeight: 1,
+                  }}
+                >&#8942;</button>
+                {showMenu && (
+                  <>
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setShowMenu(false)} />
+                    <div style={{
+                      position: 'absolute', top: '100%', right: 0, marginTop: '4px',
+                      background: 'var(--haven-surface)', border: '1px solid var(--haven-border)',
+                      borderRadius: '10px', padding: '6px', minWidth: '160px', zIndex: 50,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--haven-text-secondary)' }}>Font Size</span>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button onClick={() => adjustFont(-1)} style={{ width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--haven-border)', background: 'var(--haven-card)', color: 'var(--haven-text)', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>A-</button>
+                          <button onClick={() => adjustFont(1)} style={{ width: '28px', height: '28px', borderRadius: '6px', border: '1px solid var(--haven-border)', background: 'var(--haven-card)', color: 'var(--haven-text)', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}>A+</button>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { setShowWallpaper(true); setShowMenu(false); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '6px 8px', background: 'transparent', border: 'none', color: 'var(--haven-text-secondary)', fontSize: '12px', cursor: 'pointer', borderRadius: '6px', textAlign: 'left' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--haven-card)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >🎨 Wallpaper</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Right: token counter */}
+            <span style={{ color: tokenColor, flexShrink: 0 }}>{tokenLabel}/{maxLabel}</span>
+          </div>
+        );
+      })()}
 
       {/* Error banner */}
       {error && (

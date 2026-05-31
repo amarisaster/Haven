@@ -1155,6 +1155,13 @@ async function ensureMigrations(db: D1Database): Promise<void> {
       PRIMARY KEY (ip, endpoint)
     )`).run();
   } catch {}
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS user_preferences (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+  } catch {}
   migrationsRan = true;
 }
 
@@ -1947,6 +1954,36 @@ export default {
             'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'
           ).bind(key, value).run();
         }
+        return json({ success: true });
+      }
+
+      // ---- User Preferences (synced across devices) ----
+      if (path === '/api/preferences' && request.method === 'GET') {
+        const rows = await env.DB.prepare('SELECT key, value FROM user_preferences').all<{ key: string; value: string }>();
+        const obj: Record<string, string> = {};
+        for (const row of (rows.results || [])) obj[row.key] = row.value;
+        return json(obj);
+      }
+
+      if (path === '/api/preferences' && request.method === 'PUT') {
+        const body = await request.json() as Record<string, string>;
+        const ALLOWED_PREF_KEYS = new Set([
+          'user-name', 'user-avatar', 'user-status',
+          'font-size', 'font-family', 'text-color', 'wallpaper',
+          'tts-mode', 'thinking',
+        ]);
+        const stmts: D1PreparedStatement[] = [];
+        for (const [key, value] of Object.entries(body)) {
+          if (!ALLOWED_PREF_KEYS.has(key)) continue;
+          if (value === '' || value === null || value === undefined) {
+            stmts.push(env.DB.prepare('DELETE FROM user_preferences WHERE key = ?').bind(key));
+          } else {
+            stmts.push(env.DB.prepare(
+              'INSERT INTO user_preferences (key, value, updated_at) VALUES (?, ?, datetime(\'now\')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime(\'now\')'
+            ).bind(key, value));
+          }
+        }
+        if (stmts.length > 0) await env.DB.batch(stmts);
         return json({ success: true });
       }
 

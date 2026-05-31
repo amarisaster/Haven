@@ -25,7 +25,10 @@ export function getTTSSettings(): TTSSettings {
 }
 
 export function saveTTSSettings(settings: Partial<TTSSettings>) {
-  if (settings.mode !== undefined) localStorage.setItem('haven-tts-mode', settings.mode);
+  if (settings.mode !== undefined) {
+    localStorage.setItem('haven-tts-mode', settings.mode);
+    import('./api').then(({ pushPreference }) => pushPreference('tts-mode', settings.mode!)).catch(() => {});
+  }
   if (settings.browserVoice !== undefined) localStorage.setItem(LS_VOICE, settings.browserVoice);
   if (settings.elevenLabsKey !== undefined) localStorage.setItem(LS_ELEVEN_KEY, settings.elevenLabsKey);
   if (settings.elevenLabsVoiceId !== undefined) localStorage.setItem(LS_ELEVEN_VOICE, settings.elevenLabsVoiceId);

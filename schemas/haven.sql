@@ -117,6 +117,13 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     PRIMARY KEY (ip, endpoint)
 );
 
+-- User preferences (synced across devices — display name, avatar, UI prefs)
+CREATE TABLE IF NOT EXISTS user_preferences (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Settings (key-value store — GLOBAL per-user, not per-companion. API keys
 -- and model prefs live here and are shared across all companions.)
 CREATE TABLE IF NOT EXISTS settings (
