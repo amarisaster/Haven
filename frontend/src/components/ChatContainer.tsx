@@ -394,7 +394,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       <div style={{
         display: 'flex', alignItems: 'center', padding: '8px 12px',
         borderBottom: '1px solid var(--haven-border)', background: 'var(--haven-surface)',
-        gap: '8px', flexShrink: 0,
+        gap: '8px', flexShrink: 0, position: 'relative', zIndex: 21,
       }}>
         {/* Back button */}
         {onBack && (
@@ -492,7 +492,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '3px 12px', background: 'var(--haven-surface)', borderBottom: '1px solid var(--haven-border)',
-            fontSize: '10px', flexShrink: 0, opacity: 0.9,
+            fontSize: '10px', flexShrink: 0, opacity: 0.9, position: 'relative', zIndex: 20,
           }}>
             {/* Left: model name → tap for settings */}
             <button
