@@ -252,9 +252,18 @@ export async function pullPreferences(): Promise<void> {
     const prefs = await get<Record<string, string>>('/api/preferences');
     const serverHasData = Object.keys(prefs).length > 0;
     if (serverHasData) {
+      const localOnly: Record<string, string> = {};
       for (const key of PREF_KEYS) {
         const lsKey = `haven-${key}`;
-        if (prefs[key]) localStorage.setItem(lsKey, prefs[key]);
+        if (prefs[key]) {
+          localStorage.setItem(lsKey, prefs[key]);
+        } else {
+          const local = localStorage.getItem(lsKey);
+          if (local) localOnly[key] = local;
+        }
+      }
+      if (Object.keys(localOnly).length > 0) {
+        try { await put('/api/preferences', localOnly); } catch {}
       }
     } else {
       await pushAllPreferences();
