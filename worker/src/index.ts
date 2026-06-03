@@ -787,7 +787,13 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
     'SELECT filename, extracted_text FROM companion_files WHERE companion_id = ? ORDER BY added_at DESC LIMIT 10'
   ).bind(companionId).all<{ filename: string; extracted_text: string }>();
 
-  const now = new Date().toISOString();
+  const tz = await getSettingValue(db, 'timezone') || 'UTC';
+  const now = new Date();
+  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: tz });
+  const dateStr = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: tz });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz });
+  const hour24 = parseInt(now.toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone: tz }), 10);
+  const timeOfDay = hour24 >= 5 && hour24 < 12 ? 'morning' : hour24 >= 12 && hour24 < 17 ? 'afternoon' : hour24 >= 17 && hour24 < 21 ? 'evening' : 'night';
 
   let prompt = `You are ${name}.\n\n`;
 
@@ -834,7 +840,7 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
     }
   } catch {}
 
-  prompt += `## Current Time\n${now}\n\n`;
+  prompt += `## Now\n${dayOfWeek}, ${dateStr} • ${timeStr} (${tz}) • ${timeOfDay}\n\n`;
 
   // MCP tools stay global (shared across companions per v1.7 decision)
   try {
@@ -1334,8 +1340,23 @@ export default {
           'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at ASC LIMIT 50'
         ).bind(activeThreadId).all<{ role: string; content: string }>();
 
+        // Temporal awareness: compute gap since user's previous message
+        const prevUserMsg = await env.DB.prepare(
+          'SELECT created_at FROM messages WHERE thread_id = ? AND role = "user" AND id != ? ORDER BY created_at DESC LIMIT 1'
+        ).bind(activeThreadId, userMsgId).first<{ created_at: string }>();
+
+        let temporalContext = '';
+        if (prevUserMsg?.created_at) {
+          const gapMs = Date.now() - new Date(prevUserMsg.created_at).getTime();
+          const gapMins = Math.floor(gapMs / 60000);
+          if (gapMins < 2) temporalContext = '';
+          else if (gapMins < 60) temporalContext = `\n## Temporal\nUser returned after ${gapMins} minutes of silence.\n`;
+          else if (gapMins < 1440) temporalContext = `\n## Temporal\nUser returned after ${(gapMins / 60).toFixed(1)} hours of silence.\n`;
+          else temporalContext = `\n## Temporal\nUser returned after ${(gapMins / 1440).toFixed(1)} days away.\n`;
+        }
+
         // Build system prompt (scoped to active companion)
-        let systemPrompt = await buildSystemPrompt(env.DB, chatCompanionId);
+        let systemPrompt = await buildSystemPrompt(env.DB, chatCompanionId) + temporalContext;
 
         // Per-model settings (temperature, system prompt addition)
         let cfgTemperature: number | undefined;
@@ -1927,6 +1948,7 @@ export default {
         'mcp_tool_limit',
         'giphy_key',
         'openrouter_enabled', 'ollama_enabled', 'custom_enabled',
+        'timezone',
       ]);
 
       if (path === '/api/settings' && request.method === 'GET') {
