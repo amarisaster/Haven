@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.12.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.13.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -507,8 +507,9 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 
 ## Recent updates
 
-**Web Search** — toggle the 🌐 button in the chat header to let your companion search the web
+**v1.13.0** — Web Search
 
+- **Web search toggle** — tap the 🌐 button in the chat header to let your companion search the web.
 - **Toggle on/off per conversation** — mirrors the thinking toggle. Off by default; your choice persists across reloads.
 - **Keyless** — uses DuckDuckGo, so there's no API key to configure.
 - **Agentic** — the model decides when a question needs a live search and calls it on its own; results return as snippets. Works with any tool-calling model.
