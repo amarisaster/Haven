@@ -96,6 +96,7 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 ### See and read
 - **Image vision** — attach an image and the model sees it. Works with GPT-4o, Claude, and any vision-capable model
 - **File reading** — attach PDFs, text files, or code and the model reads the content. 30+ supported file types
+- **Web search** — toggle the 🌐 button in the chat header and your companion can search the web (keyless, via DuckDuckGo) when a question needs current information. The model decides when to search; results come back as live snippets. Works with any tool-calling model.
 
 ### Feel real
 - **Multi-provider TTS** — ElevenLabs, Hume, Groq, Kokoro (local), browser voices, or Cloud TTS via Workers AI. Pick what sounds right.
@@ -505,6 +506,12 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**Web Search** — toggle the 🌐 button in the chat header to let your companion search the web
+
+- **Toggle on/off per conversation** — mirrors the thinking toggle. Off by default; your choice persists across reloads.
+- **Keyless** — uses DuckDuckGo, so there's no API key to configure.
+- **Agentic** — the model decides when a question needs a live search and calls it on its own; results return as snippets. Works with any tool-calling model.
 
 **v1.12.0** — Custom Emoji, Stickers & Prompt Caching
 
