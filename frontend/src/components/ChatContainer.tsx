@@ -39,6 +39,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [modelSettingsTarget, setModelSettingsTarget] = useState<{ provider: string; modelId: string; modelName: string } | null>(null);
   const [thinking, setThinking] = useState(() => localStorage.getItem('haven-thinking') === 'true');
+  const [webSearch, setWebSearch] = useState(() => localStorage.getItem('haven-websearch') === 'true');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
@@ -94,6 +95,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   useEffect(() => { localStorage.setItem(LS_MODEL, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(LS_PROVIDER, selectedProvider); }, [selectedProvider]);
   useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); pushPreference('thinking', String(thinking)); }, [thinking]);
+  useEffect(() => { localStorage.setItem('haven-websearch', String(webSearch)); pushPreference('web_search', String(webSearch)); }, [webSearch]);
 
   const handleModelChange = (model: string, provider: string) => {
     setSelectedModel(model);
@@ -134,7 +136,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let realCompanionId: string | undefined;
 
     try {
-      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, controller.signal)) {
+      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, webSearch, controller.signal)) {
         switch (event.type) {
           case 'thread':
             if (event.threadId && !currentThreadId) {
@@ -234,7 +236,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     } else if (!error) {
       setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
     }
-  }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking]);
+  }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking, webSearch]);
 
   const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
     // Find the index of the edited message
@@ -261,7 +263,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let notice: string | undefined;
 
     try {
-      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking, controller.signal)) {
+      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking, webSearch, controller.signal)) {
         switch (event.type) {
           case 'chunk':
             if (event.content) {
@@ -317,7 +319,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     } else if (!error) {
       setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
     }
-  }, [messages, threadId, selectedModel, selectedProvider, thinking]);
+  }, [messages, threadId, selectedModel, selectedProvider, thinking, webSearch]);
 
   const handleDeleteMessage = useCallback(async (messageId: string) => {
     // Optimistic: drop from the list immediately. If the server delete
@@ -530,6 +532,18 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
                   lineHeight: 1,
                 }}
               >🧠</button>
+              {/* Web search toggle */}
+              <button
+                onClick={() => setWebSearch(!webSearch)}
+                title={webSearch ? 'Web search ON' : 'Web search OFF'}
+                style={{
+                  background: webSearch ? 'var(--haven-accent)' : 'transparent',
+                  border: webSearch ? 'none' : '1px solid var(--haven-border)',
+                  borderRadius: '4px', padding: '2px 5px', cursor: 'pointer',
+                  fontSize: '10px', color: webSearch ? 'white' : 'var(--haven-text-muted)',
+                  lineHeight: 1,
+                }}
+              >🌐</button>
               {/* Menu */}
               <div style={{ position: 'relative' }}>
                 <button

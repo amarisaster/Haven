@@ -342,6 +342,7 @@ export async function* sendChat(
   provider: string,
   image?: string,
   thinking?: boolean,
+  webSearch?: boolean,
   signal?: AbortSignal,
 ): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string; results?: unknown[]; emoji?: string; notice?: string; user_message_id?: string; companion_message_id?: string }> {
   let res: Response;
@@ -349,7 +350,7 @@ export async function* sendChat(
     res = await fetch(`${apiBase()}/api/chat`, {
       method: 'POST',
       headers: scopedHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}) }),
+      body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}), ...(webSearch ? { web_search: true } : {}) }),
       signal,
     });
   } catch (err) {
