@@ -667,11 +667,11 @@ async function inferenceWithTools(
   let url: string;
   let isAnthropic = resolved.format === 'anthropic';
   if (resolved.format === 'ollama') {
-    // OpenAI-compatible endpoint: the rest of this tool path parses
-    // data.choices[0].message.tool_calls and emits role:'tool' messages,
-    // which native /api/chat does not speak. /v1 returns the OpenAI shape
-    // and supports tools, so tool calling (incl. web_search) works on Ollama.
-    url = `${resolved.url}/v1/chat/completions`;
+    // Native /api/chat: both local Ollama and Ollama Cloud serve it (the
+    // OpenAI-compatible /v1 endpoint 405s on Ollama Cloud). It supports tools
+    // and returns data.message.tool_calls (args as an object). The parsing
+    // below normalizes that against the OpenAI shape (data.choices[0]).
+    url = `${resolved.url}/api/chat`;
     if (resolved.key) headers['Authorization'] = `Bearer ${resolved.key}`;
   } else if (isAnthropic) {
     url = `${resolved.url}/messages`;
@@ -764,8 +764,8 @@ async function inferenceWithTools(
       }
       conversation.push({ role: 'user', content: toolResultContent } as any);
     } else {
-      const choice = data.choices?.[0];
-      const message = choice?.message;
+      // Normalize OpenAI (choices[0].message) and native Ollama (message) shapes.
+      const message = data.choices?.[0]?.message ?? data.message;
 
       if (!message?.tool_calls?.length) {
         const content = (message?.content || '').trim();
@@ -781,7 +781,7 @@ async function inferenceWithTools(
         let ok = false;
         let server: string | undefined;
         try {
-          const args = JSON.parse(fn.arguments || '{}');
+          const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments || '{}') : (fn.arguments ?? {});
           if (NATIVE_TOOL_NAMES.has(fn.name)) {
             result = await executeNativeTool(fn.name, args, env.DB, companionId);
             ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
