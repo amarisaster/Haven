@@ -667,7 +667,11 @@ async function inferenceWithTools(
   let url: string;
   let isAnthropic = resolved.format === 'anthropic';
   if (resolved.format === 'ollama') {
-    url = `${resolved.url}/api/chat`;
+    // OpenAI-compatible endpoint: the rest of this tool path parses
+    // data.choices[0].message.tool_calls and emits role:'tool' messages,
+    // which native /api/chat does not speak. /v1 returns the OpenAI shape
+    // and supports tools, so tool calling (incl. web_search) works on Ollama.
+    url = `${resolved.url}/v1/chat/completions`;
     if (resolved.key) headers['Authorization'] = `Bearer ${resolved.key}`;
   } else if (isAnthropic) {
     url = `${resolved.url}/messages`;
