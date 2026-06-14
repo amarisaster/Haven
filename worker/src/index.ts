@@ -449,7 +449,30 @@ const NATIVE_TOOLS = [
   // down the real cause (model-specific? provider-specific?).
 ];
 
-const NATIVE_TOOL_NAMES = new Set(NATIVE_TOOLS.map(t => t.function.name));
+// Web search — gated behind the per-message web-search toggle, so it is NOT
+// in NATIVE_TOOLS (which are always advertised). It is only added to the tool
+// list when the request sets web_search:true (see inferenceWithTools). Its
+// name still lives in NATIVE_TOOL_NAMES so the execution dispatch routes a
+// call to executeNativeTool rather than hunting for a (nonexistent) MCP server.
+const WEB_SEARCH_TOOL = {
+  type: 'function',
+  function: {
+    name: 'web_search',
+    description: 'Search the public web for current, real-world information — recent events, facts you are unsure of, anything that benefits from up-to-date sources. Returns the top results as title / URL / snippet. Call it when the user asks about something you do not reliably know, then answer from the results and cite the URLs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query in plain words, as you would type into a search engine.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+};
+
+const NATIVE_TOOL_NAMES = new Set([...NATIVE_TOOLS, WEB_SEARCH_TOOL].map(t => t.function.name));
 
 async function executeNativeTool(
   name: string, args: Record<string, unknown>, db: D1Database, companionId: number,
@@ -498,7 +521,81 @@ async function executeNativeTool(
     }
   }
 
+  if (name === 'web_search') {
+    const query = typeof args.query === 'string' ? args.query.trim() : '';
+    if (!query) return 'web_search error: query required';
+    return await searchDuckDuckGo(query);
+  }
+
   return `Unknown native tool: ${name}`;
+}
+
+// Strip HTML tags + decode the handful of entities DuckDuckGo emits.
+function stripHtml(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
+// Free, keyless web search via DuckDuckGo's HTML endpoint. No API key, so any
+// Haven user gets it with zero setup when they flip the toggle. Parses the
+// result anchors + snippets out of the returned HTML. DuckDuckGo occasionally
+// rate-limits datacenter IPs (Cloudflare's); on an empty/blocked response we
+// return a plain message the model can relay rather than throwing.
+async function searchDuckDuckGo(query: string): Promise<string> {
+  try {
+    const resp = await fetch('https://html.duckduckgo.com/html/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        // A browser-ish UA reduces the chance of being served a challenge page.
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      },
+      body: `q=${encodeURIComponent(query)}`,
+    });
+    if (!resp.ok) return `web_search: DuckDuckGo returned ${resp.status}. Try rephrasing or answer from what you know.`;
+    const html = await resp.text();
+
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    // Result links: <a ... class="result__a" href="//duckduckgo.com/l/?uddg=<encoded-url>...">Title</a>
+    const linkRe = /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    // Snippets: <a ... class="result__snippet" ...>Snippet</a>
+    const snippetRe = /<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
+    const snippets: string[] = [];
+    let sm: RegExpExecArray | null;
+    while ((sm = snippetRe.exec(html)) !== null) snippets.push(stripHtml(sm[1]));
+
+    let lm: RegExpExecArray | null;
+    let idx = 0;
+    while ((lm = linkRe.exec(html)) !== null && results.length < 5) {
+      let url = lm[1];
+      const uddg = url.match(/[?&]uddg=([^&]+)/);
+      if (uddg) url = decodeURIComponent(uddg[1]);
+      else if (url.startsWith('//')) url = `https:${url}`;
+      const title = stripHtml(lm[2]);
+      const snippet = (snippets[idx] || '').slice(0, 300);
+      idx++;
+      if (title) results.push({ title, url, snippet });
+    }
+
+    if (results.length === 0) {
+      return `web_search: no results parsed for "${query}" (DuckDuckGo may have rate-limited this request). Answer from what you know and say you couldn't search.`;
+    }
+
+    const out = results
+      .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ''}`)
+      .join('\n\n');
+    return `Web search results for "${query}":\n\n${out}`;
+  } catch (e) {
+    return `web_search error: ${e}. Answer from what you know and note that the search failed.`;
+  }
 }
 
 async function loadMcpTools(db: D1Database): Promise<McpTool[]> {
@@ -556,11 +653,13 @@ async function inferenceWithTools(
   temperature?: number,
   cache = false,
   cacheTtl?: string,
+  webSearch = false,
 ): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
-  // whether the name is in NATIVE_TOOL_NAMES.
-  const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS];
+  // whether the name is in NATIVE_TOOL_NAMES. web_search is only advertised
+  // when the user flipped the per-message web-search toggle.
+  const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS, ...(webSearch ? [WEB_SEARCH_TOOL] : [])];
   const toolLookup = new Map(tools.map(t => [t.name, t]));
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -1290,6 +1389,7 @@ export default {
       if (path === '/api/chat' && request.method === 'POST') {
         const body = await request.json() as any;
         let { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image, thinking = false } = body;
+        const webSearch = body.web_search === true;
 
         if (!message) return json({ error: 'message required' }, 400);
 
@@ -1411,10 +1511,10 @@ export default {
               // take the tool-calling path whenever we have ANY tool — MCP or
               // native. Only fall through to plain streaming when truly none
               // exist (e.g., someone ripped NATIVE_TOOLS out).
-              if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0) {
+              if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0 || webSearch) {
                 // Non-streaming path with function calling
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache, cfgCacheTtl);
+                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache, cfgCacheTtl, webSearch);
                   fullResponse = toolResult.content;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
