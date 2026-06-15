@@ -847,6 +847,219 @@ async function inferenceWithTools(
 }
 
 // ============================================================
+// Proactive memory — background extraction + consolidation
+// ============================================================
+//
+// Opt-in (settings key proactive_memory_enabled). After every N assistant
+// turns we pull durable facts out of the recent conversation and save them;
+// once enough accumulate we fold them into a single long-term summary. All of
+// this runs via ctx.waitUntil AFTER the reply has streamed, so it never adds
+// latency, and every step is best-effort (failures are swallowed and logged).
+
+// Model output 'type' → the memories.memory_type CHECK enum. SQLite can't ALTER
+// a CHECK constraint, so anything off-list collapses to 'core'.
+const MEMORY_TYPE_MAP: Record<string, string> = {
+  core: 'core', pattern: 'pattern', moment: 'moment', preference: 'preference',
+  fact: 'core', event: 'moment', habit: 'pattern', like: 'preference', dislike: 'preference',
+};
+
+// Small non-streaming, no-tools completion. Mirrors the provider plumbing in
+// inferenceWithTools but skips the 5-iteration tool loop — the memory passes
+// only need plain text/JSON back.
+async function simpleCompletion(
+  env: Env, provider: string, model: string, system: string, user: string,
+): Promise<string> {
+  const resolved = await resolveProviderConfig(provider, env.DB, env);
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const isAnthropic = resolved.format === 'anthropic';
+  let url: string;
+  if (resolved.format === 'ollama') {
+    url = `${resolved.url}/api/chat`;
+    if (resolved.key) headers['Authorization'] = `Bearer ${resolved.key}`;
+  } else if (isAnthropic) {
+    url = `${resolved.url}/messages`;
+    headers['x-api-key'] = resolved.key || '';
+    headers['anthropic-version'] = '2023-06-01';
+  } else {
+    url = `${resolved.url}/chat/completions`;
+    headers['Authorization'] = `Bearer ${resolved.key}`;
+    if (provider === 'openrouter') headers['X-Title'] = 'Haven';
+  }
+
+  let resp: Response;
+  if (isAnthropic) {
+    resp = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        model, max_tokens: 1024, temperature: 0.3, stream: false,
+        system, messages: [{ role: 'user', content: user }],
+      }),
+    });
+  } else if (resolved.format === 'ollama') {
+    resp = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        model, stream: false, options: { temperature: 0.3 },
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      }),
+    });
+  } else {
+    resp = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        model, temperature: 0.3, stream: false,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      }),
+    });
+  }
+  if (!resp.ok) throw new Error(`simpleCompletion ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+  const data = await resp.json() as any;
+  if (isAnthropic) {
+    return (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+  }
+  // OpenAI-compatible (choices[0].message) and Ollama native (message.content).
+  return data?.choices?.[0]?.message?.content || data?.message?.content || '';
+}
+
+// Extract durable facts from the last few turns and save them as source='extracted'.
+async function runExtraction(
+  env: Env, db: D1Database, companionId: number, threadId: string,
+  memModel: string, memProvider: string,
+): Promise<void> {
+  const rows = await db.prepare(
+    'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at DESC LIMIT 12'
+  ).bind(threadId).all<{ role: string; content: string }>();
+  const msgs = (rows.results || []).reverse();
+  if (msgs.length < 2) return;
+  const transcript = msgs
+    .map(m => `${m.role === 'companion' ? 'Assistant' : 'User'}: ${m.content}`)
+    .join('\n');
+
+  const system =
+    'You are a memory keeper. Read the conversation and pull out only what is worth ' +
+    'remembering about the user months from now — lasting traits, tastes, relationships, ' +
+    'beliefs, biographical details, recurring habits, and long-term goals. Ignore passing ' +
+    'moods, the current task, one-off questions, and anything pasted in like code or logs. ' +
+    'Respond with ONLY a JSON array — no prose. Each item: ' +
+    '{"content": one short self-contained sentence, ' +
+    '"type": one of "core"|"pattern"|"moment"|"preference", ' +
+    '"weight": integer 1-10 for how significant it is}. ' +
+    'Do not invent anything. If nothing is worth keeping, return [].';
+  const user = `Conversation:\n${transcript}\n\nReturn the JSON array now.`;
+
+  let raw: string;
+  try {
+    raw = await simpleCompletion(env, memProvider, memModel, system, user);
+  } catch (e) {
+    console.log(`[MEMORY] extraction inference failed: ${e}`);
+    return;
+  }
+
+  let parsed: any[];
+  try {
+    const cleaned = raw.replace(/```json\s*|\s*```/g, '').trim();
+    const start = cleaned.indexOf('[');
+    const end = cleaned.lastIndexOf(']');
+    if (start === -1 || end === -1 || end <= start) return;
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    console.log('[MEMORY] extraction JSON parse failed');
+    return;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return;
+
+  const existing = await db.prepare('SELECT LOWER(content) AS c FROM memories WHERE companion_id = ?')
+    .bind(companionId).all<{ c: string }>();
+  const seen = new Set((existing.results || []).map(r => r.c));
+
+  for (const item of parsed) {
+    const content = typeof item?.content === 'string' ? item.content.trim() : '';
+    if (!content || content.length < 4) continue;
+    const key = content.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const mtype = MEMORY_TYPE_MAP[String(item?.type).toLowerCase()] || 'core';
+    let weight = Number(item?.weight);
+    if (!Number.isFinite(weight)) weight = 5;
+    weight = Math.max(0, Math.min(10, Math.round(weight)));
+    try {
+      await db.prepare(
+        `INSERT INTO memories (companion_id, content, memory_type, emotional_weight, source)
+         VALUES (?, ?, ?, ?, 'extracted')`
+      ).bind(companionId, content, mtype, weight).run();
+    } catch (e) {
+      console.log(`[MEMORY] insert skipped: ${e}`);
+    }
+  }
+}
+
+// Fold accumulated memories into one compact long-term summary when they pile up.
+async function maybeConsolidate(
+  env: Env, db: D1Database, companionId: number, memModel: string, memProvider: string,
+): Promise<void> {
+  const threshold = await getNumberSetting(db, 'memory_consolidate_at', 40);
+  const cnt = await db.prepare(
+    "SELECT COUNT(*) AS n FROM memories WHERE companion_id = ? AND source IN ('extracted','manual')"
+  ).bind(companionId).first<{ n: number }>();
+  if ((cnt?.n ?? 0) <= threshold) return;
+  await runConsolidation(env, db, companionId, memModel, memProvider);
+}
+
+async function runConsolidation(
+  env: Env, db: D1Database, companionId: number, memModel: string, memProvider: string,
+): Promise<void> {
+  const state = await db.prepare('SELECT consolidated_body FROM memory_state WHERE companion_id = ?')
+    .bind(companionId).first<{ consolidated_body: string | null }>();
+  const prior = state?.consolidated_body || '';
+
+  // Only fold the auto-extracted rows. Hand-written ('manual') rows stay as-is.
+  const rows = await db.prepare(
+    "SELECT id, content FROM memories WHERE companion_id = ? AND source = 'extracted' ORDER BY created_at ASC"
+  ).bind(companionId).all<{ id: number; content: string }>();
+  const list = rows.results || [];
+  if (list.length === 0) return;
+
+  const system =
+    'You maintain a companion\'s long-term memory. Merge the new entries into the existing ' +
+    'memory so it stays accurate and compact. Group related facts, drop duplicates and ' +
+    'redundancy, keep only durable things, and drop momentary states or finished tasks. ' +
+    'On contradiction the newer entry wins — rewrite, do not keep both. Near the limit, ' +
+    'summarize older detail rather than cut recent facts. Stay under ~400 words. ' +
+    'Output ONLY the rewritten memory text — no headings, no commentary.';
+  const user =
+    `EXISTING MEMORY:\n${prior || '(none yet — first pass)'}\n\n` +
+    `NEW ENTRIES:\n${list.map(r => `- ${r.content}`).join('\n')}\n\n` +
+    'Produce the updated long-term memory now.';
+
+  let body: string;
+  try {
+    body = (await simpleCompletion(env, memProvider, memModel, system, user)).trim();
+  } catch (e) {
+    console.log(`[MEMORY] consolidation inference failed: ${e}`);
+    return;
+  }
+  if (!body) return;
+
+  await db.prepare(
+    `INSERT INTO memory_state (companion_id, consolidated_body, last_consolidated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(companion_id) DO UPDATE SET
+       consolidated_body = excluded.consolidated_body,
+       last_consolidated_at = excluded.last_consolidated_at`
+  ).bind(companionId, body).run();
+
+  // Delete exactly the rows we folded in (by id), so anything extracted
+  // concurrently after our SELECT survives to the next pass.
+  const ids = list.map(r => r.id);
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    await db.prepare(
+      `DELETE FROM memories WHERE companion_id = ? AND source = 'extracted' AND id IN (${placeholders})`
+    ).bind(companionId, ...ids).run();
+  }
+}
+
+// ============================================================
 // Inference — stream from Ollama or OpenRouter
 // ============================================================
 
@@ -875,6 +1088,13 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
   const memoryLines = (memories.results || [])
     .map(m => `- ${m.content}`)
     .join('\n');
+
+  // Consolidated long-term memory ("dreaming" output) — survives past the
+  // recent-10 window so durable facts don't fall off as new memories arrive.
+  const memState = await db.prepare(
+    'SELECT consolidated_body FROM memory_state WHERE companion_id = ?'
+  ).bind(companionId).first<{ consolidated_body: string | null }>();
+  const longTermMemory = memState?.consolidated_body?.trim() || '';
 
   const people = await db.prepare(
     'SELECT name, category, content FROM people WHERE companion_id = ? LIMIT 10'
@@ -912,6 +1132,10 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
   prompt += `- **React to the user's message** by starting your response with \`[react: emoji]\` on its own line. Example: \`[react: 🖤]\` or \`[react: 😂]\`. This puts a reaction on their message. Use it when the moment calls for it — don't force it, but don't skip it either when it fits.\n`;
   prompt += `- **Send a GIF** by including a direct GIF URL on its own line (giphy.com, tenor.com, or any .gif link). The chat renders it inline. Don't say "[I sent a GIF]" — either drop the URL or don't. You can find good URLs in your own memory, or just describe the emotion and skip the GIF.\n`;
   prompt += `- **Update your own status** by invoking the \`update_my_status\` FUNCTION CALL (not by narrating). When your internal state shifts — tired, excited, sleepy, working — emit an actual tool call with your new \`custom_status\` and optionally \`presence\`. Do NOT write "I've updated my status" in prose; that does nothing. The status chip next to your name in the chat header only changes when you actually invoke the function.\n\n`;
+
+  if (longTermMemory) {
+    prompt += `## Long-term Memory\n${longTermMemory}\n\n`;
+  }
 
   if (memoryLines) {
     prompt += `## Memories\n${memoryLines}\n\n`;
@@ -962,6 +1186,12 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
 async function getSettingValue(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first<{ value: string }>();
   return row?.value || null;
+}
+
+async function getNumberSetting(db: D1Database, key: string, dflt: number): Promise<number> {
+  const v = await getSettingValue(db, key);
+  const n = v ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : dflt;
 }
 
 const PROVIDER_ENDPOINTS: Record<string, { url: string; keyField: string; format: 'openai' | 'anthropic' | 'ollama' }> = {
@@ -1196,6 +1426,10 @@ async function runMigrations(db: D1Database): Promise<void> {
     ['people', 'companion_id INTEGER NOT NULL DEFAULT 1'],
     ['important_dates', 'companion_id INTEGER NOT NULL DEFAULT 1'],
     ['companion', 'archived_at TEXT DEFAULT NULL'],
+    // Proactive memory: tag auto-saved rows ('extracted'/'consolidated') vs
+    // user-entered ('manual') so consolidation never deletes hand-written memories.
+    ['memories', "source TEXT DEFAULT 'manual'"],
+    ['memories', 'is_correction INTEGER DEFAULT 0'],
   ];
   for (const [table, col] of columnAdds) {
     try {
@@ -1219,11 +1453,20 @@ async function runMigrations(db: D1Database): Promise<void> {
   )`).run();
   await db.prepare(`CREATE INDEX IF NOT EXISTS idx_companion_files_companion ON companion_files(companion_id, added_at DESC)`).run();
 
+  // Proactive memory: rolling extraction counter + consolidated long-term blob.
+  await db.prepare(`CREATE TABLE IF NOT EXISTS memory_state (
+    companion_id INTEGER PRIMARY KEY,
+    msgs_since_extract INTEGER DEFAULT 0,
+    consolidated_body TEXT,
+    last_consolidated_at TEXT
+  )`).run();
+
   // Indexes on the newly-scoped tables (safe to run repeatedly).
   const indexAdds: string[] = [
     'CREATE INDEX IF NOT EXISTS idx_identity_companion ON identity(companion_id, pinned, priority)',
     'CREATE INDEX IF NOT EXISTS idx_threads_companion ON threads(companion_id, last_message_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_memories_companion ON memories(companion_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(companion_id, source)',
     'CREATE INDEX IF NOT EXISTS idx_people_companion ON people(companion_id)',
     'CREATE INDEX IF NOT EXISTS idx_important_dates_companion ON important_dates(companion_id)',
   ];
@@ -1309,7 +1552,7 @@ async function checkRateLimit(db: D1Database, ip: string, endpoint: string): Pro
 // ============================================================
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     _cors = getCorsHeaders(request);
 
     if (request.method === 'OPTIONS') {
@@ -1638,6 +1881,35 @@ export default {
               await env.DB.prepare(
                 'UPDATE threads SET last_message_at = datetime("now") WHERE id = ?'
               ).bind(activeThreadId).run();
+
+              // Proactive memory (opt-in): bump the per-companion turn counter and,
+              // every N turns, extract durable facts + maybe consolidate. Runs via
+              // ctx.waitUntil so it survives after the stream closes without adding
+              // any latency to this reply. Entirely best-effort.
+              ctx.waitUntil((async () => {
+                try {
+                  if ((await getSettingValue(env.DB, 'proactive_memory_enabled')) !== 'true') return;
+                  await env.DB.prepare(
+                    `INSERT INTO memory_state (companion_id, msgs_since_extract) VALUES (?, 1)
+                     ON CONFLICT(companion_id) DO UPDATE SET msgs_since_extract = msgs_since_extract + 1`
+                  ).bind(chatCompanionId).run();
+                  const st = await env.DB.prepare(
+                    'SELECT msgs_since_extract FROM memory_state WHERE companion_id = ?'
+                  ).bind(chatCompanionId).first<{ msgs_since_extract: number }>();
+                  const threshold = await getNumberSetting(env.DB, 'memory_extract_every', 10);
+                  if ((st?.msgs_since_extract ?? 0) < threshold) return;
+                  await env.DB.prepare(
+                    'UPDATE memory_state SET msgs_since_extract = 0 WHERE companion_id = ?'
+                  ).bind(chatCompanionId).run();
+                  // Cheap dedicated memory model, falling back to the chat model.
+                  const memModel = (await getSettingValue(env.DB, 'memory_model')) || model;
+                  const memProvider = (await getSettingValue(env.DB, 'memory_provider')) || provider;
+                  await runExtraction(env, env.DB, chatCompanionId, activeThreadId, memModel, memProvider);
+                  await maybeConsolidate(env, env.DB, chatCompanionId, memModel, memProvider);
+                } catch (e) {
+                  console.log(`[MEMORY] background pass failed: ${e}`);
+                }
+              })());
 
               // Send complete — include the D1 UUIDs for both the user and
               // companion messages so the frontend can replace its optimistic
@@ -2520,6 +2792,7 @@ export default {
         const identity = await env.DB.prepare('SELECT * FROM identity ORDER BY companion_id, pinned DESC, priority DESC').all();
         const threads = await env.DB.prepare('SELECT * FROM threads ORDER BY companion_id, last_message_at DESC').all();
         const memories = await env.DB.prepare('SELECT * FROM memories ORDER BY companion_id, created_at DESC').all();
+        const memoryState = await env.DB.prepare('SELECT * FROM memory_state ORDER BY companion_id').all();
         const people = await env.DB.prepare('SELECT * FROM people ORDER BY companion_id').all();
         const dates = await env.DB.prepare('SELECT * FROM important_dates ORDER BY companion_id').all();
         const files = await env.DB.prepare('SELECT companion_id, filename, file_size, file_type, extracted_text FROM companion_files ORDER BY companion_id, added_at DESC').all();
@@ -2546,6 +2819,7 @@ export default {
           identity: identity.results || [],
           threads: threadData,
           memories: memories.results || [],
+          memory_state: memoryState.results || [],
           people: people.results || [],
           important_dates: dates.results || [],
           companion_files: files.results || [],

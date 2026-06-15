@@ -57,9 +57,21 @@ CREATE TABLE IF NOT EXISTS memories (
     content TEXT NOT NULL,
     memory_type TEXT DEFAULT 'core' CHECK (memory_type IN ('core', 'pattern', 'moment', 'preference')),
     emotional_weight INTEGER DEFAULT 5 CHECK (emotional_weight >= 0 AND emotional_weight <= 10),
+    source TEXT DEFAULT 'manual',
+    is_correction INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_memories_companion ON memories(companion_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(companion_id, source);
+
+-- Proactive memory state (one row per companion): rolling extraction counter +
+-- consolidated long-term summary produced by the periodic "dreaming" pass.
+CREATE TABLE IF NOT EXISTS memory_state (
+    companion_id INTEGER PRIMARY KEY REFERENCES companion(id) ON DELETE CASCADE,
+    msgs_since_extract INTEGER DEFAULT 0,
+    consolidated_body TEXT,
+    last_consolidated_at TEXT
+);
 
 -- People
 CREATE TABLE IF NOT EXISTS people (
