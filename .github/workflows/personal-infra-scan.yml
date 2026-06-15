@@ -1,0 +1,72 @@
+name: Personal Infra Scan
+
+# Hard-fails the build if personal infrastructure identifiers reach the public repo.
+# This is a public, Apache-2.0 community app — it must never name the maintainer's
+# real Cloudflare account, worker/pages subdomains, or account/database IDs.
+#
+# Design note: this workflow must NOT contain any real identifier itself (that would
+# re-leak it). So it works by ALLOWLIST — any concrete *.workers.dev / *.pages.dev
+# subdomain whose label isn't an obvious placeholder is flagged, and any 32-char
+# lowercase hex string (Cloudflare account/database ID shape) is flagged.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for personal infrastructure identifiers
+        run: |
+          set -uo pipefail
+          echo "Scanning source for personal infrastructure identifiers..."
+
+          # Placeholder markers — a subdomain label containing any of these is allowed.
+          SAFE='(^\*$|^_$|example|your|my-|xxx|abc|placeholder|sample|demo|test|foo|bar)'
+
+          # Only scan files that are actually tracked in git (what the public repo
+          # contains). gitignored/untracked local files — wrangler.toml, .wrangler
+          # cache, synced Capacitor assets — are never checked out in CI and must
+          # never be scanned, or local runs would diverge from CI.
+          FILES=$(git ls-files -- \
+            '*.ts' '*.tsx' '*.js' '*.jsx' '*.json' '*.md' \
+            '*.yml' '*.yaml' '*.toml' '*.html' '*.css' \
+            | grep -v -e '/package-lock.json$' -e '^package-lock.json$')
+
+          FOUND=0
+
+          # 1) Concrete *.workers.dev / *.pages.dev subdomains not matching the allowlist
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            while IFS= read -r m; do
+              [ -z "$m" ] && continue
+              label=$(printf '%s' "$m" | sed -E 's/\.(workers|pages)\.dev.*//')
+              low=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
+              if ! printf '%s' "$low" | grep -Eq "$SAFE"; then
+                echo "::error file=$file::Personal subdomain '$m' — replace with a placeholder (e.g. your-worker.workers.dev)"
+                FOUND=1
+              fi
+            done < <(grep -oE '[A-Za-z0-9_*-]+\.(workers|pages)\.dev' "$file" 2>/dev/null || true)
+          done <<< "$FILES"
+
+          # 2) Cloudflare account/database IDs (32-char lowercase hex)
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            HITS=$(grep -nEo '\b[0-9a-f]{32}\b' "$file" 2>/dev/null || true)
+            if [ -n "$HITS" ]; then
+              echo "::error file=$file::Possible Cloudflare account/database ID (32-char hex) in $file — do not commit real IDs"
+              printf '%s\n' "$HITS" | sed "s|^|  $file:|"
+              FOUND=1
+            fi
+          done <<< "$FILES"
+
+          if [ "$FOUND" = "1" ]; then
+            echo ""
+            echo "::error::BLOCKED — personal infrastructure identifiers detected. Scrub them before this can land on the public repo."
+            exit 1
+          fi
+
+          echo "Clean — no personal infrastructure identifiers found."

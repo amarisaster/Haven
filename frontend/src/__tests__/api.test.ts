@@ -96,7 +96,7 @@ describe('CORS origin validation', () => {
   }
 
   it('reflects pages.dev origins', () => {
-    expect(getAllowedOrigin('https://haven-v17.pages.dev')).toBe('https://haven-v17.pages.dev');
+    expect(getAllowedOrigin('https://haven-example.pages.dev')).toBe('https://haven-example.pages.dev');
   });
 
   it('reflects workers.dev origins', () => {
