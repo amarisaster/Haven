@@ -73,6 +73,22 @@ CREATE TABLE IF NOT EXISTS memory_state (
     last_consolidated_at TEXT
 );
 
+-- Per-deployment token usage log (one row per inference call). source is
+-- 'chat' or 'memory' (background extraction/consolidation passes); exact is 1
+-- when the provider reported usage, 0 for the tiktoken estimate fallback.
+CREATE TABLE IF NOT EXISTS usage_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    companion_id INTEGER NOT NULL DEFAULT 1 REFERENCES companion(id) ON DELETE CASCADE,
+    model TEXT,
+    provider TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    exact INTEGER DEFAULT 0,
+    source TEXT DEFAULT 'chat',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_usage_log_companion ON usage_log(companion_id, created_at DESC);
+
 -- People
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

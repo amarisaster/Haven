@@ -389,6 +389,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       {/* Security */}
       <SecuritySection sectionStyle={sectionStyle} btnStyle={btnStyle} />
 
+      {/* Token Usage & Cost */}
+      <UsageSection sectionStyle={sectionStyle} btnStyle={btnStyle} inputStyle={inputStyle} labelStyle={labelStyle} />
+
       {/* Your Profile & Status */}
       <div style={sectionStyle}>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>You</h3>
@@ -1135,6 +1138,147 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 // ============================================================
 // Security Section
 // ============================================================
+
+// ============================================================
+// Token Usage & Cost Section
+// ============================================================
+
+interface UsageBucket { input: number; output: number; cost: number }
+interface UsageResponse {
+  totals: { day: UsageBucket; week: UsageBucket; month: UsageBucket; all: UsageBucket };
+  byModel: Array<{ model: string; provider: string; input: number; output: number; cost: number; estimated: boolean }>;
+  prices: Record<string, { in: number; out: number }>;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+function fmtCost(n: number): string {
+  if (n === 0) return '$0.00';
+  if (n < 0.01) return '<$0.01';
+  return `$${n.toFixed(2)}`;
+}
+
+function UsageSection({ sectionStyle, btnStyle, inputStyle, labelStyle }: {
+  sectionStyle: React.CSSProperties; btnStyle: React.CSSProperties;
+  inputStyle: React.CSSProperties; labelStyle: React.CSSProperties;
+}) {
+  const [data, setData] = useState<UsageResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [rows, setRows] = useState<Array<{ model: string; in: string; out: string }>>([]);
+  const [saveMsg, setSaveMsg] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    authedFetch(`${apiBase()}/api/usage`)
+      .then(r => r.json())
+      .then((d: UsageResponse) => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const startEdit = () => {
+    const p = data?.prices || {};
+    setRows(Object.entries(p).map(([model, v]) => ({ model, in: String(v.in), out: String(v.out) })));
+    setEditing(true);
+    setSaveMsg('');
+  };
+
+  const savePrices = async () => {
+    const obj: Record<string, { in: number; out: number }> = {};
+    for (const r of rows) {
+      const model = r.model.trim();
+      if (!model) continue;
+      obj[model] = { in: Number(r.in) || 0, out: Number(r.out) || 0 };
+    }
+    try {
+      await updateSettings({ usage_prices: JSON.stringify(obj) });
+      setSaveMsg('Saved');
+      setEditing(false);
+      load();
+    } catch {
+      setSaveMsg('Failed');
+    }
+  };
+
+  const periods: Array<[string, keyof UsageResponse['totals']]> = [
+    ['Today', 'day'], ['7 days', 'week'], ['30 days', 'month'], ['All time', 'all'],
+  ];
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', margin: 0 }}>Token Usage & Cost</h3>
+        <button onClick={load} style={{ ...btnStyle, fontSize: '12px', padding: '4px 10px', background: 'var(--haven-card)', color: 'var(--haven-text-secondary)' }}>Refresh</button>
+      </div>
+
+      {loading && <div style={{ fontSize: '13px', color: 'var(--haven-text-muted)' }}>Loading…</div>}
+
+      {!loading && data && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '14px' }}>
+            {periods.map(([label, key]) => {
+              const b = data.totals[key];
+              return (
+                <div key={key} style={{ background: 'var(--haven-card)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '10px 12px' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--haven-text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>{label}</div>
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--haven-text)' }}>{fmtCost(b.cost)}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--haven-text-secondary)', marginTop: '2px' }}>
+                    {fmtTokens(b.input)} in · {fmtTokens(b.output)} out
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {data.byModel.length > 0 && (
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ ...labelStyle, marginBottom: '8px' }}>By model (all time)</div>
+              {data.byModel.map((m, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', padding: '4px 0', borderBottom: i < data.byModel.length - 1 ? '1px solid var(--haven-border)' : 'none' }}>
+                  <span style={{ color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }}>
+                    {m.model}{m.estimated && <span title="Estimated — provider did not report usage" style={{ color: 'var(--haven-text-muted)' }}> ~est</span>}
+                  </span>
+                  <span style={{ color: 'var(--haven-text-secondary)' }}>{fmtTokens(m.input + m.output)} · {fmtCost(m.cost)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {data.byModel.length === 0 && (
+            <div style={{ fontSize: '13px', color: 'var(--haven-text-muted)', marginBottom: '12px' }}>No usage logged yet.</div>
+          )}
+
+          {!editing ? (
+            <button onClick={startEdit} style={{ ...btnStyle, fontSize: '12px', padding: '6px 14px', background: 'var(--haven-card)', color: 'var(--haven-text-secondary)' }}>Edit prices</button>
+          ) : (
+            <div>
+              <div style={{ ...labelStyle, marginBottom: '8px' }}>Prices (USD per 1M tokens). Model is matched as a substring of the model id.</div>
+              {rows.map((r, i) => (
+                <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '6px', alignItems: 'center' }}>
+                  <input value={r.model} placeholder="model" onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, model: e.target.value } : x))} style={{ ...inputStyle, flex: 2, padding: '6px 8px', fontSize: '12px' }} />
+                  <input value={r.in} placeholder="in" inputMode="decimal" onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, in: e.target.value } : x))} style={{ ...inputStyle, flex: 1, padding: '6px 8px', fontSize: '12px' }} />
+                  <input value={r.out} placeholder="out" inputMode="decimal" onChange={e => setRows(rs => rs.map((x, j) => j === i ? { ...x, out: e.target.value } : x))} style={{ ...inputStyle, flex: 1, padding: '6px 8px', fontSize: '12px' }} />
+                  <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} style={{ ...btnStyle, padding: '4px 8px', fontSize: '12px', background: 'transparent', color: '#ef4444', border: '1px solid var(--haven-border)' }}>✕</button>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button onClick={() => setRows(rs => [...rs, { model: '', in: '0', out: '0' }])} style={{ ...btnStyle, fontSize: '12px', padding: '6px 12px', background: 'var(--haven-card)', color: 'var(--haven-text-secondary)' }}>+ Add</button>
+                <button onClick={savePrices} style={{ ...btnStyle, fontSize: '12px', padding: '6px 14px' }}>Save</button>
+                <button onClick={() => setEditing(false)} style={{ ...btnStyle, fontSize: '12px', padding: '6px 12px', background: 'transparent', color: 'var(--haven-text-secondary)', border: '1px solid var(--haven-border)' }}>Cancel</button>
+                {saveMsg && <span style={{ fontSize: '12px', color: saveMsg === 'Saved' ? '#4ade80' : '#f87171' }}>{saveMsg}</span>}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 function SecuritySection({ sectionStyle, btnStyle }: { sectionStyle: React.CSSProperties; btnStyle: React.CSSProperties }) {
   const [secured, setSecured] = useState<boolean | null>(null);

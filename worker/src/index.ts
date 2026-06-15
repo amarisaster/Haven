@@ -654,7 +654,7 @@ async function inferenceWithTools(
   cache = false,
   cacheTtl?: string,
   webSearch = false,
-): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> }> {
+): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
   // whether the name is in NATIVE_TOOL_NAMES. web_search is only advertised
@@ -688,6 +688,20 @@ async function inferenceWithTools(
     conversation[0] = { ...conversation[0], content: conversation[0].content + '\n\nThink through your reasoning step by step inside <think> tags before giving your response. Example:\n<think>\n[your reasoning here]\n</think>\n[your response here]' };
   }
   const allToolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> = [];
+  const usage: UsageSink = {};
+  // Token usage accumulates across tool-loop iterations + the final nudge pass.
+  const addUsage = (data: any) => {
+    const u = data?.usage;
+    if (u) {
+      usage.input = (usage.input || 0) + (u.input_tokens ?? u.prompt_tokens ?? 0);
+      usage.output = (usage.output || 0) + (u.output_tokens ?? u.completion_tokens ?? 0);
+      usage.exact = true;
+    } else if (data?.prompt_eval_count || data?.eval_count) {
+      usage.input = (usage.input || 0) + (data.prompt_eval_count || 0);
+      usage.output = (usage.output || 0) + (data.eval_count || 0);
+      usage.exact = true;
+    }
+  };
   const MAX_ITERATIONS = 5;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -723,6 +737,7 @@ async function inferenceWithTools(
     }
 
     const data = await resp.json() as any;
+    addUsage(data);
 
     if (isAnthropic) {
       const thinkingParts = (data.content || []).filter((b: any) => b.type === 'thinking').map((b: any) => b.thinking).join('');
@@ -731,7 +746,7 @@ async function inferenceWithTools(
       const fullText = thinkingParts ? `<think>${thinkingParts}</think>\n${textParts}` : textParts;
 
       if (toolUses.length === 0) {
-        if (fullText.trim()) return { content: fullText, toolResults: allToolResults };
+        if (fullText.trim()) return { content: fullText, toolResults: allToolResults, usage };
         break;
       }
 
@@ -769,7 +784,7 @@ async function inferenceWithTools(
 
       if (!message?.tool_calls?.length) {
         const content = (message?.content || '').trim();
-        if (content) return { content, toolResults: allToolResults };
+        if (content) return { content, toolResults: allToolResults, usage };
         break;
       }
 
@@ -827,6 +842,7 @@ async function inferenceWithTools(
     }
     if (finalResp.ok) {
       const finalData = await finalResp.json() as any;
+      addUsage(finalData);
       let finalContent = '';
       if (isAnthropic) {
         finalContent = (finalData.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
@@ -834,7 +850,7 @@ async function inferenceWithTools(
         finalContent = finalData?.choices?.[0]?.message?.content || finalData?.message?.content || '';
       }
       if (finalContent) {
-        return { content: finalContent, toolResults: allToolResults };
+        return { content: finalContent, toolResults: allToolResults, usage };
       }
     }
   } catch { /* fall through to informative placeholder */ }
@@ -843,6 +859,7 @@ async function inferenceWithTools(
   return {
     content: `(Hit tool-call limit without a text reply. Called: ${names || 'nothing recognized'}. Try again — or pick a less tool-happy model.)`,
     toolResults: allToolResults,
+    usage,
   };
 }
 
@@ -868,6 +885,7 @@ const MEMORY_TYPE_MAP: Record<string, string> = {
 // only need plain text/JSON back.
 async function simpleCompletion(
   env: Env, provider: string, model: string, system: string, user: string,
+  usageSink?: UsageSink,
 ): Promise<string> {
   const resolved = await resolveProviderConfig(provider, env.DB, env);
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -914,6 +932,18 @@ async function simpleCompletion(
   }
   if (!resp.ok) throw new Error(`simpleCompletion ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
   const data = await resp.json() as any;
+  if (usageSink) {
+    const u = data?.usage;
+    if (u) {
+      usageSink.input = u.input_tokens ?? u.prompt_tokens ?? 0;
+      usageSink.output = u.output_tokens ?? u.completion_tokens ?? 0;
+      usageSink.exact = true;
+    } else if (data?.prompt_eval_count || data?.eval_count) {
+      usageSink.input = data.prompt_eval_count || 0;
+      usageSink.output = data.eval_count || 0;
+      usageSink.exact = true;
+    }
+  }
   if (isAnthropic) {
     return (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
   }
@@ -948,12 +978,16 @@ async function runExtraction(
   const user = `Conversation:\n${transcript}\n\nReturn the JSON array now.`;
 
   let raw: string;
+  const exUsage: UsageSink = {};
   try {
-    raw = await simpleCompletion(env, memProvider, memModel, system, user);
+    raw = await simpleCompletion(env, memProvider, memModel, system, user, exUsage);
   } catch (e) {
     console.log(`[MEMORY] extraction inference failed: ${e}`);
     return;
   }
+  try {
+    await logUsage(db, companionId, memModel, memProvider, exUsage, 'memory', `${system}\n${user}`, raw);
+  } catch { /* best-effort */ }
 
   let parsed: any[];
   try {
@@ -1032,12 +1066,16 @@ async function runConsolidation(
     'Produce the updated long-term memory now.';
 
   let body: string;
+  const coUsage: UsageSink = {};
   try {
-    body = (await simpleCompletion(env, memProvider, memModel, system, user)).trim();
+    body = (await simpleCompletion(env, memProvider, memModel, system, user, coUsage)).trim();
   } catch (e) {
     console.log(`[MEMORY] consolidation inference failed: ${e}`);
     return;
   }
+  try {
+    await logUsage(db, companionId, memModel, memProvider, coUsage, 'memory', `${system}\n${user}`, body);
+  } catch { /* best-effort */ }
   if (!body) return;
 
   await db.prepare(
@@ -1194,6 +1232,59 @@ async function getNumberSetting(db: D1Database, key: string, dflt: number): Prom
   return Number.isFinite(n) && n > 0 ? n : dflt;
 }
 
+// Rough token estimate (~4 chars/token) used ONLY when the provider reported no
+// usage. Labeled exact=0 in usage_log so the UI can mark it as an estimate.
+function estimateTokens(text: string): number {
+  return Math.ceil((text || '').length / 4);
+}
+
+// Per-million-token USD price defaults. Approximate, drift over time — which is
+// why the price table is user-editable (settings key usage_prices, merged over
+// these). Keys are matched as case-insensitive substrings of the model id, so
+// "claude-opus-4" covers every opus-4.x snapshot. Local models default to free.
+type Price = { in: number; out: number };
+const DEFAULT_PRICES: Record<string, Price> = {
+  'claude-opus-4': { in: 15, out: 75 },
+  'claude-sonnet-4': { in: 3, out: 15 },
+  'claude-haiku': { in: 0.8, out: 4 },
+  'gpt-4o-mini': { in: 0.15, out: 0.6 },
+  'gpt-4o': { in: 2.5, out: 10 },
+  'gpt-4.1-mini': { in: 0.4, out: 1.6 },
+  'gpt-4.1': { in: 2, out: 8 },
+  'o1': { in: 15, out: 60 },
+};
+
+function priceFor(model: string, merged: Record<string, Price>): Price {
+  if (!model) return { in: 0, out: 0 };
+  if (merged[model]) return merged[model];
+  const lower = model.toLowerCase();
+  for (const [k, v] of Object.entries(merged)) {
+    if (lower.includes(k.toLowerCase())) return v;
+  }
+  return { in: 0, out: 0 };
+}
+
+// Persist one inference call's token usage. When usage.exact is false we fall
+// back to a char-based estimate from the supplied prompt/reply text.
+async function logUsage(
+  db: D1Database,
+  companionId: number,
+  model: string,
+  provider: string,
+  usage: UsageSink,
+  source: string,
+  estInputText = '',
+  estOutputText = '',
+): Promise<void> {
+  const exact = usage.exact === true;
+  const input = exact ? (usage.input || 0) : estimateTokens(estInputText);
+  const output = exact ? (usage.output || 0) : estimateTokens(estOutputText);
+  if (input === 0 && output === 0) return;
+  await db.prepare(
+    'INSERT INTO usage_log (companion_id, model, provider, input_tokens, output_tokens, exact, source) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(companionId, model, provider, input, output, exact ? 1 : 0, source).run();
+}
+
 const PROVIDER_ENDPOINTS: Record<string, { url: string; keyField: string; format: 'openai' | 'anthropic' | 'ollama' }> = {
   openai: { url: 'https://api.openai.com/v1', keyField: 'openai_key', format: 'openai' },
   anthropic: { url: 'https://api.anthropic.com/v1', keyField: 'anthropic_key', format: 'anthropic' },
@@ -1261,6 +1352,11 @@ async function isProviderEnabled(db: D1Database, provider: 'openrouter' | 'ollam
   return val !== 'false';
 }
 
+// Filled in-place by streamInference from provider usage events so the caller
+// can log token spend after the stream closes. exact=true when the provider
+// reported usage; left undefined when it didn't (caller falls back to estimate).
+type UsageSink = { input?: number; output?: number; exact?: boolean };
+
 async function* streamInference(
   messages: Array<{ role: string; content: any }>,
   model: string,
@@ -1270,6 +1366,7 @@ async function* streamInference(
   temperature?: number,
   cache = false,
   cacheTtl?: string,
+  usageSink?: UsageSink,
 ): AsyncGenerator<string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const resolved = await resolveProviderConfig(provider, env.DB, env);
@@ -1319,6 +1416,7 @@ async function* streamInference(
         messages: inferMsgs,
         stream: true,
         temperature: temperature ?? 0.8,
+        stream_options: { include_usage: true },
       }),
     });
   }
@@ -1365,7 +1463,14 @@ async function* streamInference(
         // Ollama native: newline-delimited JSON objects
         try {
           const parsed = JSON.parse(trimmed);
-          if (parsed.done) return;
+          if (parsed.done) {
+            if (usageSink && (parsed.prompt_eval_count || parsed.eval_count)) {
+              usageSink.input = parsed.prompt_eval_count || 0;
+              usageSink.output = parsed.eval_count || 0;
+              usageSink.exact = true;
+            }
+            return;
+          }
           const token = parsed.message?.content;
           if (token) yield token;
         } catch {}
@@ -1374,6 +1479,14 @@ async function* streamInference(
         const data = trimmed.slice(6).trim();
         try {
           const parsed = JSON.parse(data);
+          if (parsed.type === 'message_start' && usageSink && parsed.message?.usage) {
+            usageSink.input = parsed.message.usage.input_tokens || 0;
+            usageSink.output = parsed.message.usage.output_tokens || 0;
+            usageSink.exact = true;
+          } else if (parsed.type === 'message_delta' && usageSink && parsed.usage?.output_tokens != null) {
+            usageSink.output = parsed.usage.output_tokens;
+            usageSink.exact = true;
+          }
           if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'thinking') {
             yield '<think>';
           } else if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'thinking_delta') {
@@ -1396,6 +1509,11 @@ async function* streamInference(
         if (data === '[DONE]') return;
         try {
           const parsed = JSON.parse(data);
+          if (usageSink && parsed.usage) {
+            usageSink.input = parsed.usage.prompt_tokens || 0;
+            usageSink.output = parsed.usage.completion_tokens || 0;
+            usageSink.exact = true;
+          }
           const token = parsed.choices?.[0]?.delta?.content;
           if (token) yield token;
         } catch {}
@@ -1461,6 +1579,21 @@ async function runMigrations(db: D1Database): Promise<void> {
     last_consolidated_at TEXT
   )`).run();
 
+  // v1.13: per-deployment token usage log. One row per inference call.
+  // `source` distinguishes 'chat' from background memory passes ('memory').
+  // `exact` is 1 when the provider reported usage, 0 for the tiktoken estimate.
+  await db.prepare(`CREATE TABLE IF NOT EXISTS usage_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    companion_id INTEGER NOT NULL DEFAULT 1,
+    model TEXT,
+    provider TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    exact INTEGER DEFAULT 0,
+    source TEXT DEFAULT 'chat',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`).run();
+
   // Indexes on the newly-scoped tables (safe to run repeatedly).
   const indexAdds: string[] = [
     'CREATE INDEX IF NOT EXISTS idx_identity_companion ON identity(companion_id, pinned, priority)',
@@ -1469,6 +1602,7 @@ async function runMigrations(db: D1Database): Promise<void> {
     'CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(companion_id, source)',
     'CREATE INDEX IF NOT EXISTS idx_people_companion ON people(companion_id)',
     'CREATE INDEX IF NOT EXISTS idx_important_dates_companion ON important_dates(companion_id)',
+    'CREATE INDEX IF NOT EXISTS idx_usage_log_companion ON usage_log(companion_id, created_at DESC)',
   ];
   for (const sql of indexAdds) {
     try {
@@ -1747,6 +1881,7 @@ export default {
           async start(controller) {
             try {
               let fullResponse = '';
+              const chatUsage: UsageSink = {};
 
               // Send thread ID
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'thread', threadId: activeThreadId })}\n\n`));
@@ -1763,6 +1898,7 @@ export default {
                 try {
                   const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache, cfgCacheTtl, webSearch);
                   fullResponse = toolResult.content;
+                  Object.assign(chatUsage, toolResult.usage);
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tools', results: toolResult.toolResults })}\n\n`));
@@ -1788,14 +1924,14 @@ export default {
                     notice += `Provider error: ${errStr.slice(0, 200)}`;
                   }
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
-                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl)) {
+                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl, chatUsage)) {
                     fullResponse += token;
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                   }
                 }
               } else {
                 // Stream tokens (no tools)
-                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl)) {
+                for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl, chatUsage)) {
                   fullResponse += token;
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
                 }
@@ -1881,6 +2017,20 @@ export default {
               await env.DB.prepare(
                 'UPDATE threads SET last_message_at = datetime("now") WHERE id = ?'
               ).bind(activeThreadId).run();
+
+              // Token usage log (always on, best-effort, off the reply path).
+              // exact when the provider reported usage; otherwise a labeled
+              // char-based estimate from the prompt + reply text.
+              ctx.waitUntil((async () => {
+                try {
+                  const estIn = chatUsage.exact
+                    ? ''
+                    : chatMessages.map((m: any) => typeof m.content === 'string' ? m.content : '').join('\n');
+                  await logUsage(env.DB, chatCompanionId, model, provider, chatUsage, 'chat', estIn, fullResponse);
+                } catch (e) {
+                  console.log(`[USAGE] chat log failed: ${e}`);
+                }
+              })());
 
               // Proactive memory (opt-in): bump the per-companion turn counter and,
               // every N turns, extract durable facts + maybe consolidate. Runs via
@@ -2325,6 +2475,7 @@ export default {
         'giphy_key',
         'openrouter_enabled', 'ollama_enabled', 'custom_enabled',
         'timezone',
+        'usage_prices',
       ]);
 
       if (path === '/api/settings' && request.method === 'GET') {
@@ -2350,6 +2501,55 @@ export default {
           ).bind(key, value).run();
         }
         return json({ success: true });
+      }
+
+      // ---- Token usage / cost ----
+      // Per-companion token totals over rolling windows + estimated USD cost
+      // using the merged price table (built-in defaults + user overrides).
+      if (path === '/api/usage' && request.method === 'GET') {
+        const cid = getCompanionId(request);
+        let userPrices: Record<string, Price> = {};
+        try {
+          const raw = await getSettingValue(env.DB, 'usage_prices');
+          if (raw) userPrices = JSON.parse(raw);
+        } catch { /* malformed — ignore, use defaults */ }
+        const merged = { ...DEFAULT_PRICES, ...userPrices };
+
+        const rows = await env.DB.prepare(
+          `SELECT model, provider,
+             SUM(input_tokens) AS in_all, SUM(output_tokens) AS out_all, MIN(exact) AS min_exact,
+             SUM(CASE WHEN created_at >= datetime('now','-1 day')  THEN input_tokens  ELSE 0 END) AS in_day,
+             SUM(CASE WHEN created_at >= datetime('now','-1 day')  THEN output_tokens ELSE 0 END) AS out_day,
+             SUM(CASE WHEN created_at >= datetime('now','-7 days')  THEN input_tokens  ELSE 0 END) AS in_week,
+             SUM(CASE WHEN created_at >= datetime('now','-7 days')  THEN output_tokens ELSE 0 END) AS out_week,
+             SUM(CASE WHEN created_at >= datetime('now','-30 days') THEN input_tokens  ELSE 0 END) AS in_month,
+             SUM(CASE WHEN created_at >= datetime('now','-30 days') THEN output_tokens ELSE 0 END) AS out_month
+           FROM usage_log WHERE companion_id = ? GROUP BY model, provider`
+        ).bind(cid).all<any>();
+
+        const blank = () => ({ input: 0, output: 0, cost: 0 });
+        const totals: Record<string, { input: number; output: number; cost: number }> = {
+          day: blank(), week: blank(), month: blank(), all: blank(),
+        };
+        const byModel: Array<{ model: string; provider: string; input: number; output: number; cost: number; estimated: boolean }> = [];
+        for (const r of (rows.results || [])) {
+          const p = priceFor(r.model || '', merged);
+          const costOf = (inp: number, out: number) => (inp / 1e6) * p.in + (out / 1e6) * p.out;
+          const add = (bucket: { input: number; output: number; cost: number }, inp: number, out: number) => {
+            bucket.input += inp; bucket.output += out; bucket.cost += costOf(inp, out);
+          };
+          add(totals.day, r.in_day || 0, r.out_day || 0);
+          add(totals.week, r.in_week || 0, r.out_week || 0);
+          add(totals.month, r.in_month || 0, r.out_month || 0);
+          add(totals.all, r.in_all || 0, r.out_all || 0);
+          byModel.push({
+            model: r.model || '(unknown)', provider: r.provider || '',
+            input: r.in_all || 0, output: r.out_all || 0, cost: costOf(r.in_all || 0, r.out_all || 0),
+            estimated: r.min_exact === 0,
+          });
+        }
+        byModel.sort((a, b) => b.cost - a.cost);
+        return json({ totals, byModel, prices: merged });
       }
 
       // ---- User Preferences (synced across devices) ----
