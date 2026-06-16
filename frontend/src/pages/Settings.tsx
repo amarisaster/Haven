@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { Identity } from '../lib/types';
 import AuthMedia from '../components/AuthMedia';
+import { APP_VERSION } from '../lib/version';
 import {
   getCompanion, updateCompanion,
   getSettings, updateSettings,
@@ -1116,7 +1117,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
       {/* App Info */}
       <div style={sectionStyle}>
         <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>About</h3>
-        <p style={{ fontSize: '13px', color: 'var(--haven-text-secondary)', margin: '0 0 4px' }}>Haven v1.13.0</p>
+        <p style={{ fontSize: '13px', color: 'var(--haven-text-secondary)', margin: '0 0 4px' }}>Haven v{APP_VERSION}</p>
         <p style={{ fontSize: '12px', color: 'var(--haven-text-muted)', margin: 0 }}>Haven — self-hosted companion chat</p>
       </div>
 

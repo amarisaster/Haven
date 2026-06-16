@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, ToolCallRecord } from '../lib/types';
 import type { ModelInfo } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId } from '../lib/api';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
 import ChatMessages from './ChatMessages';
@@ -89,9 +89,9 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
 
   // Persist settings
   useEffect(() => { localStorage.setItem(LS_FONT, String(fontSize)); }, [fontSize]);
-  // Load wallpaper from IndexedDB per thread
-  const wpKey = threadId ? `wp-${threadId}` : 'wp-default';
-  useEffect(() => { loadWallpaper(wpKey).then(setWallpaper); }, [wpKey]);
+  // Load wallpaper from IndexedDB — one wallpaper per companion
+  const wpKey = `wp-companion-${activeCompanionId()}`;
+  useEffect(() => { loadWallpaper(wpKey).then(setWallpaper); }, [wpKey, companionName]);
   useEffect(() => { localStorage.setItem(LS_MODEL, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(LS_PROVIDER, selectedProvider); }, [selectedProvider]);
   useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); pushPreference('thinking', String(thinking)); }, [thinking]);
@@ -652,14 +652,6 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           current={wallpaper}
           onSelect={(wp: string) => { setWallpaper(wp); saveWallpaper(wpKey, wp); }}
           onClose={() => setShowWallpaper(false)}
-        />
-      )}
-
-      {/* Click outside to close menu */}
-      {showMenu && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 40 }}
-          onClick={() => setShowMenu(false)}
         />
       )}
     </div>

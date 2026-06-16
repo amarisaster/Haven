@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.14.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.14.1-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -507,12 +507,18 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 
 ## Recent updates
 
-**v1.14.0** — Token Usage & Cost
+**v1.14.1** — Chat Menu & Wallpaper Fixes
+
+- **Chat menu works again** — the ⋮ menu's Font Size and Wallpaper controls were unresponsive (an invisible full-screen overlay was intercepting every tap). Removed the stray overlay so the menu items respond.
+- **Per-companion wallpapers** — each companion now keeps its own wallpaper across all of their conversations, instead of the wallpaper being tied to a single thread. Switching companions loads that companion's wallpaper.
+
+**v1.14.0** — Token Usage & Cost + Proactive Memory
 
 - **Per-deployment usage counter** — every inference call's token spend is logged (chat plus the background memory passes, tagged separately).
 - **Exact where possible** — reads provider-reported usage from Anthropic, OpenAI-compatible, and Ollama; falls back to a clearly-labeled estimate only when a provider returns none.
 - **Cost panel in Settings** — token totals and estimated USD cost over today / 7 days / 30 days / all time, plus a per-model breakdown.
 - **Editable price table** — built-in per-model price defaults you can override, since rates vary by provider and change over time.
+- **Proactive memory (opt-in)** — when enabled, your companion automatically extracts durable facts from conversations and periodically consolidates them into a long-term summary that's injected into the system prompt, so it remembers across threads. Off by default; toggle it on in Settings.
 
 **v1.13.0** — Web Search
 
