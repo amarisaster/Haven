@@ -1859,14 +1859,38 @@ export default {
           content: m.content,
         }));
 
-        // If the latest message has an image, make it multimodal (vision)
+        // If the latest message has an image, make it multimodal (vision).
+        // Two provider-specific shapes: Ollama's native /api/chat rejects
+        // OpenAI-style content arrays ("cannot unmarshal array into ...
+        // string") — it wants content as a string with images in a sibling
+        // `images` field. OpenAI/Anthropic use the array form. When the
+        // selected Ollama model is text-only, also swap to a vision-capable
+        // fallback (setting `ollama_vision_fallback`) so the image actually
+        // gets seen instead of 400ing.
         if (image && historyMessages.length > 0) {
           const last = historyMessages[historyMessages.length - 1];
           if (last.role === 'user') {
-            (last as any).content = [
-              { type: 'text', text: last.content },
-              { type: 'image_url', image_url: { url: image } },
-            ];
+            if (provider === 'ollama') {
+              const VISION_RE = /vision|vl|-v\b|4o|gemini|claude-3|claude-opus|claude-sonnet-4|claude-haiku|llava|pixtral|gpt-4-turbo|gpt-4\.1|kimi/i;
+              if (!VISION_RE.test(model)) {
+                const fallback = await getSettingValue(env.DB, 'ollama_vision_fallback');
+                if (fallback) {
+                  console.log(`[CHAT] vision fallback: ${model} -> ${fallback}`);
+                  model = fallback;
+                } else {
+                  console.log(`[CHAT] warning: image attached to text-only model ${model} and no ollama_vision_fallback set`);
+                }
+              }
+              // Strip data URL prefix — Ollama wants raw base64 in `images`.
+              const base64 = image.startsWith('data:') ? image.split(',', 2)[1] : image;
+              (last as any).images = [base64];
+              // content stays as the original string; no array wrapping.
+            } else {
+              (last as any).content = [
+                { type: 'text', text: last.content },
+                { type: 'image_url', image_url: { url: image } },
+              ];
+            }
           }
         }
 
@@ -2465,7 +2489,7 @@ export default {
       const SETTINGS_SECRET_PATTERN = /_key$|_token$|_secret$|password/i;
       const ALLOWED_SETTINGS_KEYS = new Set([
         'provider',
-        'openrouter_key', 'ollama_url', 'ollama_key',
+        'openrouter_key', 'ollama_url', 'ollama_key', 'ollama_vision_fallback',
         'anthropic_key', 'openai_key', 'groq_key', 'xai_key', 'huggingface_key', 'moonshot_key',
         'anthropic_cache',
         'custom_key', 'custom_base_url',
@@ -2813,7 +2837,7 @@ export default {
           }
         }
 
-        const VISION_PATTERNS = /vision|vl|-v\b|4o|gemini|claude-3|claude-opus|claude-sonnet-4|claude-haiku|llava|pixtral|gpt-4-turbo|gpt-4\.1/i;
+        const VISION_PATTERNS = /vision|vl|-v\b|4o|gemini|claude-3|claude-opus|claude-sonnet-4|claude-haiku|llava|pixtral|gpt-4-turbo|gpt-4\.1|kimi/i;
         const THINKING_PATTERNS = /thinking|reasoner|deepseek-r1|qwq|o1-|o3-|o4-|kimi.*thinking|claude-opus/i;
         const TOOLS_PATTERNS = /gpt-4|gpt-3\.5|claude|gemini|command-r|mistral-large|mistral-medium|llama-3|qwen|deepseek-v|glm/i;
         for (const m of models) {
