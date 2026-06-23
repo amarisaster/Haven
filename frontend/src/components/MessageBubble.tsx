@@ -299,6 +299,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
   const [editText, setEditText] = useState(message.content);
   const [speaking, setSpeaking] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [expandedToolCall, setExpandedToolCall] = useState<number | null>(null);
 
   useEffect(() => { loadCustomEmoji(); }, []);
 
@@ -537,23 +538,58 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
             justifyContent: isUser ? 'flex-end' : 'flex-start',
           }}>
             {message.tool_calls.map((tc, i) => (
-              <span
+              <button
                 key={i}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedToolCall(expandedToolCall === i ? null : i);
+                }}
                 title={tc.server ? `${tc.server} · ${tc.name}` : tc.name}
                 style={{
                   fontSize: '10px',
                   padding: '2px 8px',
                   borderRadius: '10px',
+                  cursor: 'pointer',
                   background: tc.ok === false ? 'transparent' : 'var(--haven-card)',
-                  border: `1px solid ${tc.ok === false ? '#f8717155' : 'var(--haven-border)'}`,
+                  border: `1px solid ${tc.ok === false ? '#f8717155' : expandedToolCall === i ? 'var(--haven-accent)' : 'var(--haven-border)'}`,
                   color: tc.ok === false ? '#f87171' : 'var(--haven-accent)',
                   opacity: tc.ok === false ? 0.7 : 1,
                   textDecoration: tc.ok === false ? 'line-through' : 'none',
                 }}
               >
-                🔧 {tc.name}
-              </span>
+                🔧 {tc.name} {expandedToolCall === i ? '▾' : '▸'}
+              </button>
             ))}
+            {expandedToolCall !== null && message.tool_calls[expandedToolCall] && (
+              <div style={{
+                width: '100%',
+                marginTop: '6px',
+                padding: '10px',
+                borderRadius: '8px',
+                background: 'var(--haven-card)',
+                border: '1px solid var(--haven-border)',
+                fontSize: '11px',
+                fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                maxHeight: '256px',
+                overflowY: 'auto',
+                textAlign: 'left',
+              }}>
+                {message.tool_calls[expandedToolCall].arguments !== undefined && (
+                  <>
+                    <div style={{ color: 'var(--haven-muted)', marginBottom: '4px' }}>args:</div>
+                    <div style={{ marginBottom: '8px' }}>{JSON.stringify(message.tool_calls[expandedToolCall].arguments, null, 2)}</div>
+                  </>
+                )}
+                {message.tool_calls[expandedToolCall].result !== undefined && (
+                  <>
+                    <div style={{ color: 'var(--haven-muted)', marginBottom: '4px' }}>result:</div>
+                    <div>{typeof message.tool_calls[expandedToolCall].result === 'string' ? message.tool_calls[expandedToolCall].result : JSON.stringify(message.tool_calls[expandedToolCall].result, null, 2)}</div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 

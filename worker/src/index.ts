@@ -727,7 +727,7 @@ async function inferenceWithTools(
     } else {
       resp = await fetch(url, {
         method: 'POST', headers,
-        body: JSON.stringify({ model, messages: conversation, tools: openaiTools, tool_choice: 'auto', temperature: temperature ?? 0.8, stream: false }),
+        body: JSON.stringify({ model, messages: resolved.format === 'ollama' ? normalizeMessagesForOllama(conversation) : conversation, tools: openaiTools, tool_choice: 'auto', temperature: temperature ?? 0.8, stream: false }),
       });
     }
 
@@ -774,7 +774,7 @@ async function inferenceWithTools(
             }
           }
         } catch (e) { result = `Tool error: ${e}`; ok = false; }
-        allToolResults.push({ name: tu.name, result, server, ok });
+        allToolResults.push({ name: tu.name, arguments: tu.input, result, server, ok });
         toolResultContent.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
       }
       conversation.push({ role: 'user', content: toolResultContent } as any);
@@ -810,7 +810,7 @@ async function inferenceWithTools(
             }
           }
         } catch (e) { result = `Tool error: ${e}`; ok = false; }
-        allToolResults.push({ name: fn.name, result, server, ok });
+        allToolResults.push({ name: fn.name, arguments: args, result, server, ok });
         conversation.push({ role: 'tool', content: result, tool_call_id: tc.id } as any);
       }
     }
@@ -834,7 +834,7 @@ async function inferenceWithTools(
         method: 'POST', headers,
         body: JSON.stringify({
           model,
-          messages: [...conversation, { role: 'user', content: nudge }],
+          messages: resolved.format === 'ollama' ? normalizeMessagesForOllama([...conversation, { role: 'user', content: nudge }]) : [...conversation, { role: 'user', content: nudge }],
           temperature: 0.8,
           stream: false,
         }),
@@ -1313,6 +1313,37 @@ async function resolveProviderConfig(provider: string, db: D1Database, env: Env)
   return { url: 'https://openrouter.ai/api/v1', key: orKey, format: 'openai' };
 }
 
+function stringifyOllamaContentPart(part: any): string {
+  if (typeof part === 'string') return part;
+  if (part == null) return '';
+  if (typeof part !== 'object') return String(part);
+  if (typeof part.text === 'string') return part.text;
+  if (typeof part.content === 'string') return part.content;
+  if (part.type === 'image_url') return '[image attached]';
+  if (part.type === 'tool_result') {
+    return typeof part.content === 'string' ? part.content : JSON.stringify(part.content ?? '');
+  }
+  if (part.type === 'tool_use') return `[tool_use: ${part.name || 'tool'}]`;
+  try {
+    return JSON.stringify(part);
+  } catch {
+    return String(part);
+  }
+}
+
+function normalizeMessagesForOllama<T extends { role: string; content: any }>(messages: T[]): T[] {
+  return messages.map((msg) => {
+    let content = msg.content;
+    if (Array.isArray(content)) {
+      content = content.map(stringifyOllamaContentPart).filter(Boolean).join('\n');
+    } else if (content == null) {
+      content = '';
+    } else if (typeof content !== 'string') {
+      content = stringifyOllamaContentPart(content);
+    }
+    return { ...msg, content };
+  });
+}
 function buildAnthropicMessages(messages: Array<{ role: string; content: any }>): { system: string; messages: Array<{ role: string; content: any }> } {
   let system = '';
   const filtered: Array<{ role: string; content: any }> = [];
@@ -1392,6 +1423,8 @@ async function* streamInference(
     inferMsgs[0] = { ...inferMsgs[0], content: inferMsgs[0].content + '\n\nThink through your reasoning step by step inside <think> tags before giving your response. Example:\n<think>\n[your reasoning here]\n</think>\n[your response here]' };
   }
 
+  const requestMsgs = resolved.format === 'ollama' ? normalizeMessagesForOllama(inferMsgs) : inferMsgs;
+
   let response: Response;
   if (isAnthropic) {
     const { system, messages: anthropicMsgs } = buildAnthropicMessages(inferMsgs);
@@ -1413,7 +1446,7 @@ async function* streamInference(
       headers,
       body: JSON.stringify({
         model,
-        messages: inferMsgs,
+        messages: requestMsgs,
         stream: true,
         temperature: temperature ?? 0.8,
         stream_options: { include_usage: true },
@@ -1427,7 +1460,7 @@ async function* streamInference(
     response = await fetch(nativeUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model, messages: inferMsgs, stream: true }),
+      body: JSON.stringify({ model, messages: requestMsgs, stream: true }),
     });
     if (response.ok) {
       useNativeOllama = true;
@@ -1816,9 +1849,9 @@ export default {
           'INSERT INTO messages (id, thread_id, role, content) VALUES (?, ?, "user", ?)'
         ).bind(userMsgId, activeThreadId, message).run();
 
-        // Load conversation history
+        // Load conversation history (latest 50, reversed back to chronological order)
         const history = await env.DB.prepare(
-          'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at ASC LIMIT 50'
+          'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at DESC LIMIT 50'
         ).bind(activeThreadId).all<{ role: string; content: string }>();
 
         // Temporal awareness: compute gap since user's previous message
@@ -1854,7 +1887,7 @@ export default {
         }
 
         // Assemble messages
-        const historyMessages = (history.results || []).map(m => ({
+        const historyMessages = (history.results || []).reverse().map(m => ({
           role: m.role === 'companion' ? 'assistant' : m.role,
           content: m.content,
         }));

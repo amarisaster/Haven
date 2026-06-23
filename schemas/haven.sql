@@ -26,8 +26,6 @@ CREATE TABLE IF NOT EXISTS identity (
     pinned INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_identity_companion ON identity(companion_id, pinned, priority);
-
 -- Threads (conversations)
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
@@ -36,8 +34,6 @@ CREATE TABLE IF NOT EXISTS threads (
     last_message_at TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_threads_companion ON threads(companion_id, last_message_at DESC);
-
 -- Messages
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -61,9 +57,6 @@ CREATE TABLE IF NOT EXISTS memories (
     is_correction INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_memories_companion ON memories(companion_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(companion_id, source);
-
 -- Proactive memory state (one row per companion): rolling extraction counter +
 -- consolidated long-term summary produced by the periodic "dreaming" pass.
 CREATE TABLE IF NOT EXISTS memory_state (
@@ -87,8 +80,6 @@ CREATE TABLE IF NOT EXISTS usage_log (
     source TEXT DEFAULT 'chat',
     created_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_usage_log_companion ON usage_log(companion_id, created_at DESC);
-
 -- People
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,8 +89,6 @@ CREATE TABLE IF NOT EXISTS people (
     content TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_people_companion ON people(companion_id);
-
 -- Important dates
 CREATE TABLE IF NOT EXISTS important_dates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,8 +99,6 @@ CREATE TABLE IF NOT EXISTS important_dates (
     recurring INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_important_dates_companion ON important_dates(companion_id);
-
 -- Companion project files (attached PDFs / text / code — loaded into the
 -- system prompt as "Project Files" when chatting with this companion).
 CREATE TABLE IF NOT EXISTS companion_files (
@@ -124,8 +111,6 @@ CREATE TABLE IF NOT EXISTS companion_files (
     extracted_text TEXT,
     added_at TEXT DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_companion_files_companion ON companion_files(companion_id, added_at DESC);
-
 -- Custom emoji & stickers (uploaded media, GLOBAL per-user)
 CREATE TABLE IF NOT EXISTS custom_media (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -9,6 +9,8 @@ export interface ToolCallRecord {
   name: string;   // e.g. "store_memory", "wren_diary_store"
   server?: string; // which MCP server it came from, if known
   ok?: boolean;   // whether the call succeeded
+  arguments?: Record<string, unknown>; // tool call args (new)
+  result?: unknown; // tool call result (new)
 }
 
 export interface Message {

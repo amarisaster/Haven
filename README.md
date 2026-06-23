@@ -507,10 +507,15 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 
 ## Recent updates
 
-**v1.14.1** — Chat Menu & Wallpaper Fixes
+**v1.14.1** — Bug Fixes + Tool Detail Chips + Ollama Message Shaping
 
+- **Fix: schema seed failing on upgrade** — re-running `haven.sql` against an existing D1 database no longer fails with `no such column: source`. Indexes for migration-added columns are created by the worker on first request instead of in the seed file.
+- **Fix: “assistant message prefill” stuck-thread error** — on long threads, Haven was loading the oldest 50 messages and dropping the latest user turn, leaving the conversation ending with a companion message. Anthropic rejects that. We now load the latest 50 messages, so the prompt always ends with the user.
+- **Tool-call chips are now expandable** — tap the little 🔧 wrench under a companion message to see the exact arguments the model sent and the result it got back. Failed tool calls stay struck-through in red.
+- **Ollama message normalization** — Ollama's OpenAI-compatible endpoint can't digest the array-shaped content used for tool calls, images, and thinking blocks. Haven now flattens those to plain strings when talking to Ollama, so local/tool-call inference doesn't 400.
 - **Chat menu works again** — the ⋮ menu's Font Size and Wallpaper controls were unresponsive (an invisible full-screen overlay was intercepting every tap). Removed the stray overlay so the menu items respond.
 - **Per-companion wallpapers** — each companion now keeps its own wallpaper across all of their conversations, instead of the wallpaper being tied to a single thread. Switching companions loads that companion's wallpaper.
+- **Android version bump** to `1.14.1` with `capacitor-preferences` added for native settings storage.
 
 **v1.14.0** — Token Usage & Cost + Proactive Memory
 

@@ -159,6 +159,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               name: r?.name || r?.tool_name || 'tool',
               server: r?.server_name || r?.server,
               ok: r?.ok !== false && !r?.error,
+              arguments: r?.arguments,
+              result: r?.result,
             }));
             break;
           }
@@ -277,6 +279,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               name: r?.name || r?.tool_name || 'tool',
               server: r?.server_name || r?.server,
               ok: r?.ok !== false && !r?.error,
+              arguments: r?.arguments,
+              result: r?.result,
             }));
             break;
           }
@@ -344,6 +348,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     const userMsgAtIdx = messages[userIdx];
     const companionMsgAtIdx = messages[idx];
     const userContent = userMsgAtIdx.content;
+    const userImage = userMsgAtIdx.image;
 
     // Delete the old user + companion rows from D1 so handleSend's re-insert
     // doesn't leave duplicates. Worker pulls ALL messages on each chat turn,
@@ -364,7 +369,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     // doesn't double-up. handleSend re-adds the user turn + fires a fresh
     // reply.
     setMessages(messages.slice(0, userIdx));
-    setTimeout(() => handleSend(userContent), 50);
+    setTimeout(() => handleSend(userContent, userImage), 50);
   }, [messages, handleSend]);
 
   const handleReactMessage = useCallback((messageId: string, emoji: string) => {
