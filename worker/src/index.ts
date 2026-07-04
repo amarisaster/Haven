@@ -654,7 +654,7 @@ async function inferenceWithTools(
   cache = false,
   cacheTtl?: string,
   webSearch = false,
-): Promise<{ content: string; toolResults: Array<{ name: string; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
+): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
   // whether the name is in NATIVE_TOOL_NAMES. web_search is only advertised
@@ -687,7 +687,7 @@ async function inferenceWithTools(
   if (thinking && !isAnthropic && conversation.length > 0 && conversation[0].role === 'system') {
     conversation[0] = { ...conversation[0], content: conversation[0].content + '\n\nThink through your reasoning step by step inside <think> tags before giving your response. Example:\n<think>\n[your reasoning here]\n</think>\n[your response here]' };
   }
-  const allToolResults: Array<{ name: string; result: string; server?: string; ok: boolean }> = [];
+  const allToolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }> = [];
   const usage: UsageSink = {};
   // Token usage accumulates across tool-loop iterations + the final nudge pass.
   const addUsage = (data: any) => {
@@ -795,8 +795,9 @@ async function inferenceWithTools(
         let result = `Unknown tool: ${fn.name}`;
         let ok = false;
         let server: string | undefined;
+        let args: any = {};
         try {
-          const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments || '{}') : (fn.arguments ?? {});
+          args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments || '{}') : (fn.arguments ?? {});
           if (NATIVE_TOOL_NAMES.has(fn.name)) {
             result = await executeNativeTool(fn.name, args, env.DB, companionId);
             ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
