@@ -1777,7 +1777,14 @@ export default {
       // ---- Auth middleware ----
       const storedToken = await getAuthToken(env.DB);
       if (storedToken) {
-        const isExempt = path === '/' || path === '/health' || path === '/api/companion' || path === '/api/companions';
+        // Exempt only the bootstrap READS (the app loads the companion grid and
+        // detects setup state before a token is entered). Writes to these paths
+        // (PUT /api/companion, POST /api/companions) must still require the token —
+        // matching on path alone let them bypass auth (audit 2026-07-04).
+        const isExempt =
+          path === '/' ||
+          path === '/health' ||
+          ((path === '/api/companion' || path === '/api/companions') && request.method === 'GET');
         if (!isExempt) {
           const bearer = request.headers.get('Authorization')?.replace('Bearer ', '') || null;
           const qToken = url.searchParams.get('token');
