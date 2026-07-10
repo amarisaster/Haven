@@ -15,6 +15,7 @@ import {
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
 import WallpaperPicker from '../components/WallpaperPicker';
 const FilesPanel = lazy(() => import('../components/FilesPanel'));
+const MemoriesPanel = lazy(() => import('../components/MemoriesPanel'));
 
 interface SettingsProps {
   onImport?: () => void;
@@ -84,6 +85,7 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
   // Worker URL
   const [workerUrl, setWorkerUrl] = useState(() => localStorage.getItem('haven-api-url') || '');
+  const [backendOpen, setBackendOpen] = useState(false);
 
   // Chat
   const [fontSize, setFontSize] = useState(() => {
@@ -358,33 +360,45 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
       <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--haven-text)', marginBottom: '20px' }}>Settings</h1>
 
-      {/* Backend URL */}
+      {/* Backend URL — collapsible */}
       <div style={sectionStyle}>
-        <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>Backend</h3>
-        <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginBottom: '12px' }}>
-          Your Haven Worker URL. Leave empty if using the same origin.
-        </p>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            type="text"
-            placeholder="https://your-haven-worker.workers.dev"
-            value={workerUrl}
-            onChange={(e) => {
-              const val = e.target.value;
-              setWorkerUrl(val);
-              const trimmed = val.trim();
-              if (trimmed) localStorage.setItem('haven-api-url', trimmed);
-              else localStorage.removeItem('haven-api-url');
-            }}
-            style={inputStyle}
-          />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', margin: 0 }}>Backend</h3>
           <button
-            onClick={() => window.location.reload()}
-            style={{ ...btnStyle, whiteSpace: 'nowrap' }}
+            onClick={() => setBackendOpen(!backendOpen)}
+            style={{ background: 'none', border: 'none', color: 'var(--haven-text-muted)', cursor: 'pointer', fontSize: '12px' }}
           >
-            Apply
+            {backendOpen ? 'Collapse' : 'Expand'}
           </button>
         </div>
+        {backendOpen && (
+          <>
+            <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginTop: '8px', marginBottom: '12px' }}>
+              Your Haven Worker URL. Leave empty if using the same origin.
+            </p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                placeholder="https://your-haven-worker.workers.dev"
+                value={workerUrl}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setWorkerUrl(val);
+                  const trimmed = val.trim();
+                  if (trimmed) localStorage.setItem('haven-api-url', trimmed);
+                  else localStorage.removeItem('haven-api-url');
+                }}
+                style={inputStyle}
+              />
+              <button
+                onClick={() => window.location.reload()}
+                style={{ ...btnStyle, whiteSpace: 'nowrap' }}
+              >
+                Apply
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Security */}
@@ -549,6 +563,18 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
           <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>Project Files</h4>
           <Suspense fallback={<div style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>Loading...</div>}>
             <FilesPanel companionId={compId} />
+          </Suspense>
+        </div>
+
+        {/* Memories — facts/preferences the companion remembers, either
+            added here or auto-saved during chat. */}
+        <div style={{
+          marginTop: '20px', paddingTop: '16px',
+          borderTop: '1px solid var(--haven-border)',
+        }}>
+          <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '12px' }}>Memories</h4>
+          <Suspense fallback={<div style={{ fontSize: '12px', color: 'var(--haven-text-muted)' }}>Loading...</div>}>
+            <MemoriesPanel />
           </Suspense>
         </div>
 

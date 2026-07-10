@@ -230,8 +230,11 @@ export const addIdentity = (data: Partial<Identity>) => post('/api/identity', da
 export const deleteIdentity = (id: number) => del(`/api/identity/${id}`);
 
 // Memories
-export const getMemories = () => get<Array<{ id: number; content: string; memory_type: string; emotional_weight: number }>>('/api/memories');
+export type Memory = { id: number; content: string; memory_type: string; emotional_weight: number; source?: string; created_at?: string };
+export const getMemories = () => get<Array<Memory>>('/api/memories');
 export const addMemory = (data: { content: string; memory_type?: string; emotional_weight?: number }) => post('/api/memories', data);
+export const updateMemory = (data: { id: number; content?: string; memory_type?: string; emotional_weight?: number }) => put('/api/memories', data);
+export const deleteMemory = (id: number) => del(`/api/memories?id=${id}`);
 
 // Models
 export const getModels = () => get<ModelInfo[]>('/api/models');

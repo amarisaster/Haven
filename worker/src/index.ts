@@ -2520,6 +2520,32 @@ export default {
         return json({ success: true });
       }
 
+      // Edit a memory (partial — only the fields provided are changed). Scoped to
+      // the companion so you can only edit that companion's own memories.
+      if (path === '/api/memories' && request.method === 'PUT') {
+        const cid = getCompanionId(request);
+        const { id, content, memory_type, emotional_weight } = await request.json() as any;
+        if (!id) return json({ error: 'id required' }, 400);
+        await env.DB.prepare(
+          `UPDATE memories SET content = COALESCE(?, content),
+             memory_type = COALESCE(?, memory_type),
+             emotional_weight = COALESCE(?, emotional_weight)
+           WHERE id = ? AND companion_id = ?`
+        ).bind(content ?? null, memory_type ?? null, emotional_weight ?? null, id, cid).run();
+        return json({ success: true });
+      }
+
+      // Delete a memory (id via ?id= query param). Scoped to the companion.
+      if (path === '/api/memories' && request.method === 'DELETE') {
+        const cid = getCompanionId(request);
+        const id = new URL(request.url).searchParams.get('id');
+        if (!id) return json({ error: 'id required' }, 400);
+        await env.DB.prepare(
+          'DELETE FROM memories WHERE id = ? AND companion_id = ?'
+        ).bind(id, cid).run();
+        return json({ success: true });
+      }
+
       // ---- Settings ----
       // Anyone with a Haven Worker URL can GET /api/settings. Before v1.6.2 this
       // returned raw API keys (OpenRouter, Anthropic, etc.) to any caller. Now

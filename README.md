@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.14.2-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.16.1-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -507,7 +507,14 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 
 ## Recent updates
 
-**v1.14.2** — Bug Fixes + Tool Detail Chips + Ollama Message Shaping
+**v1.16.1** — Memory Manager
+
+- **Memory Manager** — a new Memories panel in Settings lets you browse, add, edit, and delete a companion's memories. Memories saved automatically by proactive memory are flagged with an **auto** badge so you can review and prune what gets kept.
+- **Edit/delete memory endpoints** — the worker now supports editing and deleting individual memories (`PUT` / `DELETE /api/memories`), scoped per companion.
+- **Backend section collapsible** — the Worker URL / Backend section in Settings is now a collapsible dropdown.
+- **Android version bump** to `1.16.1`.
+
+**v1.15.0** — Bug Fixes + Tool Detail Chips + Ollama Message Shaping
 
 - **Fix: schema seed failing on upgrade** — re-running `haven.sql` against an existing D1 database no longer fails with `no such column: source`. Indexes for migration-added columns are created by the worker on first request instead of in the seed file.
 - **Fix: “assistant message prefill” stuck-thread error** — on long threads, Haven was loading the oldest 50 messages and dropping the latest user turn, leaving the conversation ending with a companion message. Anthropic rejects that. We now load the latest 50 messages, so the prompt always ends with the user.
@@ -515,7 +522,7 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 - **Ollama message normalization** — Ollama's OpenAI-compatible endpoint can't digest the array-shaped content used for tool calls, images, and thinking blocks. Haven now flattens those to plain strings when talking to Ollama, so local/tool-call inference doesn't 400.
 - **Chat menu works again** — the ⋮ menu's Font Size and Wallpaper controls were unresponsive (an invisible full-screen overlay was intercepting every tap). Removed the stray overlay so the menu items respond.
 - **Per-companion wallpapers** — each companion now keeps its own wallpaper across all of their conversations, instead of the wallpaper being tied to a single thread. Switching companions loads that companion's wallpaper.
-- **Android version bump** to `1.14.2` with `capacitor-preferences` added for native settings storage.
+- **Android version bump** to `1.15.0` with `capacitor-preferences` added for native settings storage.
 
 **v1.14.0** — Token Usage & Cost + Proactive Memory
 
