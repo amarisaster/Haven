@@ -239,6 +239,38 @@ export const deleteMemory = (id: number) => del(`/api/memories?id=${id}`);
 // Models
 export const getModels = () => get<ModelInfo[]>('/api/models');
 
+export interface CodexRunContext {
+  systemPrompt: string;
+  companionId: number;
+  companionName?: string | null;
+  mcpServers?: Array<{ name: string; url: string; api_key: string | null }>;
+}
+
+export interface PersistCodexMessageResult {
+  id: string;
+  threadId: string;
+}
+
+export const getCodexRunContext = (threadId: string | null) =>
+  get<CodexRunContext>(`/api/codex/run-context${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''}`);
+
+export const persistCodexMessage = (
+  threadId: string | null,
+  role: 'user' | 'companion',
+  content: string,
+  model = 'codex',
+) => post<PersistCodexMessageResult>('/api/codex/messages', { threadId, role, content, model });
+
+export interface CodexPairStatus {
+  configured: boolean;
+  channelEnabled: boolean;
+  providerEnabled: boolean;
+}
+
+export const getCodexPairStatus = () => get<CodexPairStatus>('/api/codex/pair/status');
+export const generateCodexPairToken = () => post<{ token: string }>('/api/codex/pair/generate');
+export const revokeCodexPairToken = () => post<{ success: boolean }>('/api/codex/pair/revoke');
+
 // Settings
 export const getSettings = () => get<Record<string, string>>('/api/settings');
 export const updateSettings = (data: Record<string, string>) => put('/api/settings', data);

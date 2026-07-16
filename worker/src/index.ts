@@ -3,9 +3,12 @@
  * Handles inference (Ollama/OpenRouter), D1 persistence, and CI loading
  */
 
+export { CodexRelay } from './codex-relay';
+
 interface Env {
   DB: D1Database;
   FILES: R2Bucket;
+  CODEX_RELAY: DurableObjectNamespace;
   OPENROUTER_API_KEY?: string;
   OLLAMA_URL?: string;
 }
@@ -1222,6 +1225,35 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
   return prompt;
 }
 
+async function buildTemporalContext(
+  db: D1Database,
+  companionId: number,
+  threadId?: string | null,
+  excludeMessageId?: string,
+): Promise<string> {
+  if (!threadId) return '';
+
+  const thread = await db.prepare(
+    'SELECT companion_id FROM threads WHERE id = ?'
+  ).bind(threadId).first<{ companion_id: number }>();
+  if (!thread || thread.companion_id !== companionId) return '';
+
+  const previous = excludeMessageId
+    ? await db.prepare(
+        'SELECT created_at FROM messages WHERE thread_id = ? AND role = "user" AND id != ? ORDER BY created_at DESC LIMIT 1'
+      ).bind(threadId, excludeMessageId).first<{ created_at: string }>()
+    : await db.prepare(
+        'SELECT created_at FROM messages WHERE thread_id = ? AND role = "user" ORDER BY created_at DESC LIMIT 1'
+      ).bind(threadId).first<{ created_at: string }>();
+
+  if (!previous?.created_at) return '';
+  const gapMins = Math.floor((Date.now() - new Date(previous.created_at).getTime()) / 60000);
+  if (gapMins < 2) return '';
+  if (gapMins < 60) return `\n## Temporal\nUser returned after ${gapMins} minutes of silence.\n`;
+  if (gapMins < 1440) return `\n## Temporal\nUser returned after ${(gapMins / 60).toFixed(1)} hours of silence.\n`;
+  return `\n## Temporal\nUser returned after ${(gapMins / 1440).toFixed(1)} days away.\n`;
+}
+
 async function getSettingValue(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first<{ value: string }>();
   return row?.value || null;
@@ -1379,8 +1411,9 @@ function openaiToolsToAnthropic(openaiTools: any[]): any[] {
 
 // Returns whether a provider's toggle is on. Missing/empty = enabled
 // (default on, back-compat). Only the literal string "false" disables.
-async function isProviderEnabled(db: D1Database, provider: 'openrouter' | 'ollama' | 'custom'): Promise<boolean> {
+async function isProviderEnabled(db: D1Database, provider: 'openrouter' | 'ollama' | 'custom' | 'codex'): Promise<boolean> {
   const val = await getSettingValue(db, `${provider}_enabled`);
+  if (provider === 'codex') return val === 'true';
   return val !== 'false';
 }
 
@@ -1775,6 +1808,99 @@ export default {
         return json({ success: true });
       }
 
+      // ---- Codex relay sockets + attachments (self-authenticating, feature-flagged) ----
+      const codexAttachmentPrefix = '/api/codex/attachment/';
+      if (path.startsWith(codexAttachmentPrefix) && request.method === 'GET') {
+        if ((await getSettingValue(env.DB, 'codex_channel_enabled')) !== 'true') {
+          return new Response('Not found', { status: 404 });
+        }
+
+        const storedToken = await getSettingValue(env.DB, 'codex_connector_token');
+        const suppliedToken = request.headers.get('X-Codex-Connector-Token')?.trim()
+          || url.searchParams.get('token');
+        if (!storedToken || suppliedToken !== storedToken) {
+          return json({ error: 'Unauthorized' }, 401);
+        }
+
+        const key = path.slice(codexAttachmentPrefix.length);
+        const object = await env.FILES.get(key);
+        if (!object) return new Response('Not found', { status: 404 });
+
+        return new Response(object.body, {
+          headers: {
+            'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
+          },
+        });
+      }
+
+      // Status door for the Codex lane: the engine's MCP interface is broken
+      // upstream (auto-cancelled approvals), so companions on that lane update
+      // the header chip via this connector-authed endpoint from the shell.
+      if (path === '/api/codex/status' && request.method === 'POST') {
+        if ((await getSettingValue(env.DB, 'codex_channel_enabled')) !== 'true') {
+          return new Response('Not found', { status: 404 });
+        }
+        const storedToken = await getSettingValue(env.DB, 'codex_connector_token');
+        const suppliedToken = request.headers.get('X-Codex-Connector-Token')?.trim()
+          || url.searchParams.get('token');
+        if (!storedToken || suppliedToken !== storedToken) {
+          return json({ error: 'Unauthorized' }, 401);
+        }
+        const body = await request.json().catch(() => ({})) as { companionId?: number; custom_status?: string; presence?: string };
+        const cid = Number(body.companionId);
+        if (!Number.isInteger(cid) || cid <= 0) return json({ error: 'companionId required' }, 400);
+        const status = typeof body.custom_status === 'string' ? body.custom_status.slice(0, 200) : null;
+        const rawPresence = typeof body.presence === 'string' ? body.presence.trim().toLowerCase() : null;
+        const VALID_PRESENCE = ['online', 'away', 'busy', 'offline'];
+        const presence = rawPresence && VALID_PRESENCE.includes(rawPresence) ? rawPresence : null;
+        if (status !== null) {
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_status:${cid}`, status).run();
+        }
+        if (presence) {
+          await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(`companion_presence:${cid}`, presence).run();
+        }
+        return json({ success: true, custom_status: status ?? '(unchanged)', presence: presence ?? '(unchanged)' });
+      }
+
+      if (path === '/api/codex/ws' || path === '/api/codex/bridge') {
+        if ((await getSettingValue(env.DB, 'codex_channel_enabled')) !== 'true') {
+          return new Response('Not found', { status: 404 });
+        }
+
+        const role = path === '/api/codex/ws' ? 'client' : 'bridge';
+        if (role === 'client') {
+          const storedToken = await getAuthToken(env.DB);
+          const suppliedToken = url.searchParams.get('token');
+          if (storedToken && suppliedToken !== storedToken) {
+            return json({ error: 'Unauthorized' }, 401);
+          }
+        } else {
+          const storedToken = await getSettingValue(env.DB, 'codex_connector_token');
+          const suppliedToken = request.headers.get('X-Codex-Connector-Token')?.trim()
+            || url.searchParams.get('token');
+          if (!storedToken || suppliedToken !== storedToken) {
+            return json({ error: 'Unauthorized' }, 401);
+          }
+        }
+
+        if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+          return new Response('Expected a WebSocket upgrade', {
+            status: 426,
+            headers: { Upgrade: 'websocket' },
+          });
+        }
+
+        const id = env.CODEX_RELAY.idFromName('relay');
+        const stub = env.CODEX_RELAY.get(id);
+        const headers = new Headers(request.headers);
+        headers.set('X-Codex-Relay-Role', role);
+
+        return stub.fetch(new Request('https://codex-relay.internal/socket', {
+          method: 'GET',
+          headers,
+        }));
+      }
+
       // ---- Auth middleware ----
       const storedToken = await getAuthToken(env.DB);
       if (storedToken) {
@@ -1795,6 +1921,41 @@ export default {
         }
       }
 
+      // ---- Codex bridge pairing (authenticated by normal Haven middleware) ----
+      if (path === '/api/codex/pair/generate' && request.method === 'POST') {
+        const bytes = new Uint8Array(32);
+        crypto.getRandomValues(bytes);
+        const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+        await env.DB.batch([
+          env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+            .bind('codex_connector_token', token),
+          env.DB.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
+            .bind('codex_channel_enabled', 'true'),
+          env.DB.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
+            .bind('codex_enabled', 'true'),
+        ]);
+        return json({ token });
+      }
+
+      if (path === '/api/codex/pair/status' && request.method === 'GET') {
+        const [connectorToken, channelEnabled, providerEnabled] = await Promise.all([
+          getSettingValue(env.DB, 'codex_connector_token'),
+          getSettingValue(env.DB, 'codex_channel_enabled'),
+          getSettingValue(env.DB, 'codex_enabled'),
+        ]);
+        return json({
+          configured: !!connectorToken,
+          channelEnabled: channelEnabled === 'true',
+          providerEnabled: providerEnabled === 'true',
+        });
+      }
+
+      if (path === '/api/codex/pair/revoke' && request.method === 'POST') {
+        await env.DB.prepare('DELETE FROM settings WHERE key = ?').bind('codex_connector_token').run();
+        return json({ success: true });
+      }
+
       // ---- Health ----
       if (path === '/' || path === '/health') {
         const hasOR = env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key');
@@ -1805,6 +1966,82 @@ export default {
           hasOpenRouter: !!hasOR,
           hasOllama: !!hasOl,
         });
+      }
+
+      // ---- Codex run context + chat persistence (authenticated/scoped) ----
+      if (path === '/api/codex/run-context' && request.method === 'GET') {
+        const [codexEnabled, channelEnabled] = await Promise.all([
+          isProviderEnabled(env.DB, 'codex'),
+          getSettingValue(env.DB, 'codex_channel_enabled'),
+        ]);
+        if (!codexEnabled || channelEnabled !== 'true') return new Response('Not found', { status: 404 });
+
+        const companionId = getCompanionId(request);
+        const threadId = url.searchParams.get('threadId');
+        if (threadId) {
+          const thread = await env.DB.prepare(
+            'SELECT companion_id FROM threads WHERE id = ?'
+          ).bind(threadId).first<{ companion_id: number }>();
+          if (!thread) return json({ error: 'Thread not found' }, 404);
+          if (thread.companion_id !== companionId) return json({ error: 'thread belongs to a different companion' }, 403);
+        }
+        const temporalContext = await buildTemporalContext(env.DB, companionId, threadId);
+        const systemPrompt = await buildSystemPrompt(env.DB, companionId) + temporalContext;
+        // Haven's enabled MCP servers ride along so the PC bridge can hand
+        // Codex the SAME toolbelt the normal chat lane uses (replacing the
+        // machine's own MCP config for the run). api_key goes to the user's
+        // own authenticated daemon only — same trust boundary as the chat
+        // lane, which sends it to those servers as a bearer anyway.
+        const mcpRows = await env.DB.prepare(
+          'SELECT name, url, api_key FROM mcp_servers WHERE enabled = 1 ORDER BY created_at ASC'
+        ).all<{ name: string; url: string; api_key: string | null }>()
+          .then((r) => r.results || [])
+          .catch(() => []); // table may not exist on fresh instances
+        const companionRow = await env.DB.prepare('SELECT name FROM companion WHERE id = ?')
+          .bind(companionId).first<{ name: string }>();
+        return json({ systemPrompt, companionId, companionName: companionRow?.name ?? null, mcpServers: mcpRows });
+      }
+
+      if (path === '/api/codex/messages' && request.method === 'POST') {
+        const [codexEnabled, channelEnabled] = await Promise.all([
+          isProviderEnabled(env.DB, 'codex'),
+          getSettingValue(env.DB, 'codex_channel_enabled'),
+        ]);
+        if (!codexEnabled || channelEnabled !== 'true') return new Response('Not found', { status: 404 });
+
+        const companionId = getCompanionId(request);
+        const body = await request.json() as {
+          threadId?: string | null;
+          role?: string;
+          content?: string;
+          model?: string;
+        };
+        if (body.role !== 'user' && body.role !== 'companion') return json({ error: 'role must be user or companion' }, 400);
+        if (typeof body.content !== 'string' || !body.content.trim()) return json({ error: 'content required' }, 400);
+
+        let activeThreadId = body.threadId || null;
+        if (!activeThreadId) {
+          if (body.role !== 'user') return json({ error: 'threadId required for companion messages' }, 400);
+          activeThreadId = crypto.randomUUID();
+          await env.DB.prepare(
+            'INSERT INTO threads (id, companion_id, title, last_message_at) VALUES (?, ?, ?, datetime("now"))'
+          ).bind(activeThreadId, companionId, body.content.substring(0, 50)).run();
+        } else {
+          const thread = await env.DB.prepare(
+            'SELECT companion_id FROM threads WHERE id = ?'
+          ).bind(activeThreadId).first<{ companion_id: number }>();
+          if (!thread) return json({ error: 'Thread not found' }, 404);
+          if (thread.companion_id !== companionId) return json({ error: 'thread belongs to a different companion' }, 403);
+        }
+
+        const id = crypto.randomUUID();
+        await env.DB.prepare(
+          'INSERT INTO messages (id, thread_id, role, content, model) VALUES (?, ?, ?, ?, ?)'
+        ).bind(id, activeThreadId, body.role, body.content, body.model || null).run();
+        await env.DB.prepare(
+          'UPDATE threads SET last_message_at = datetime("now") WHERE id = ?'
+        ).bind(activeThreadId).run();
+        return json({ id, threadId: activeThreadId });
       }
 
       // ---- Chat (SSE streaming) ----
@@ -1863,19 +2100,7 @@ export default {
         ).bind(activeThreadId).all<{ role: string; content: string }>();
 
         // Temporal awareness: compute gap since user's previous message
-        const prevUserMsg = await env.DB.prepare(
-          'SELECT created_at FROM messages WHERE thread_id = ? AND role = "user" AND id != ? ORDER BY created_at DESC LIMIT 1'
-        ).bind(activeThreadId, userMsgId).first<{ created_at: string }>();
-
-        let temporalContext = '';
-        if (prevUserMsg?.created_at) {
-          const gapMs = Date.now() - new Date(prevUserMsg.created_at).getTime();
-          const gapMins = Math.floor(gapMs / 60000);
-          if (gapMins < 2) temporalContext = '';
-          else if (gapMins < 60) temporalContext = `\n## Temporal\nUser returned after ${gapMins} minutes of silence.\n`;
-          else if (gapMins < 1440) temporalContext = `\n## Temporal\nUser returned after ${(gapMins / 60).toFixed(1)} hours of silence.\n`;
-          else temporalContext = `\n## Temporal\nUser returned after ${(gapMins / 1440).toFixed(1)} days away.\n`;
-        }
+        const temporalContext = await buildTemporalContext(env.DB, chatCompanionId, activeThreadId, userMsgId);
 
         // Build system prompt (scoped to active companion)
         let systemPrompt = await buildSystemPrompt(env.DB, chatCompanionId) + temporalContext;
@@ -2113,13 +2338,18 @@ export default {
                   ).bind(chatCompanionId).first<{ msgs_since_extract: number }>();
                   const threshold = await getNumberSetting(env.DB, 'memory_extract_every', 10);
                   if ((st?.msgs_since_extract ?? 0) < threshold) return;
-                  await env.DB.prepare(
-                    'UPDATE memory_state SET msgs_since_extract = 0 WHERE companion_id = ?'
-                  ).bind(chatCompanionId).run();
                   // Cheap dedicated memory model, falling back to the chat model.
                   const memModel = (await getSettingValue(env.DB, 'memory_model')) || model;
                   const memProvider = (await getSettingValue(env.DB, 'memory_provider')) || provider;
+                  // Reset the counter ONLY after extraction succeeds. Resetting
+                  // first meant a transient LLM/JSON failure permanently skipped
+                  // that batch (the "last 12 messages" window moved on before the
+                  // next attempt). Now a failure leaves the counter over threshold
+                  // so it retries on the very next turn. (audit 2026-07-12 #2)
                   await runExtraction(env, env.DB, chatCompanionId, activeThreadId, memModel, memProvider);
+                  await env.DB.prepare(
+                    'UPDATE memory_state SET msgs_since_extract = 0 WHERE companion_id = ?'
+                  ).bind(chatCompanionId).run();
                   await maybeConsolidate(env, env.DB, chatCompanionId, memModel, memProvider);
                 } catch (e) {
                   console.log(`[MEMORY] background pass failed: ${e}`);
@@ -2526,12 +2756,15 @@ export default {
         const cid = getCompanionId(request);
         const { id, content, memory_type, emotional_weight } = await request.json() as any;
         if (!id) return json({ error: 'id required' }, 400);
-        await env.DB.prepare(
+        const upd = await env.DB.prepare(
           `UPDATE memories SET content = COALESCE(?, content),
              memory_type = COALESCE(?, memory_type),
              emotional_weight = COALESCE(?, emotional_weight)
            WHERE id = ? AND companion_id = ?`
         ).bind(content ?? null, memory_type ?? null, emotional_weight ?? null, id, cid).run();
+        // Don't report success on a no-op: a wrong/stale id or another
+        // companion's row matches nothing but looked identical to a real edit.
+        if (upd.meta.changes === 0) return json({ error: 'Memory not found' }, 404);
         return json({ success: true });
       }
 
@@ -2540,9 +2773,10 @@ export default {
         const cid = getCompanionId(request);
         const id = new URL(request.url).searchParams.get('id');
         if (!id) return json({ error: 'id required' }, 400);
-        await env.DB.prepare(
+        const del = await env.DB.prepare(
           'DELETE FROM memories WHERE id = ? AND companion_id = ?'
         ).bind(id, cid).run();
+        if (del.meta.changes === 0) return json({ error: 'Memory not found' }, 404);
         return json({ success: true });
       }
 
@@ -2756,11 +2990,20 @@ export default {
         const models: Array<{ id: string; name: string; provider: string; tier: string; description?: string; context_length?: number; supports_tools?: boolean; supports_vision?: boolean; supports_thinking?: boolean }> = [];
         // Per-provider toggles suppress that provider's models from the
         // picker entirely when disabled.
-        const [orEnabled, ollamaEnabled, customEnabled] = await Promise.all([
+        const [orEnabled, ollamaEnabled, customEnabled, codexEnabled, codexChannelEnabled, codexModels] = await Promise.all([
           isProviderEnabled(env.DB, 'openrouter'),
           isProviderEnabled(env.DB, 'ollama'),
           isProviderEnabled(env.DB, 'custom'),
+          isProviderEnabled(env.DB, 'codex'),
+          getSettingValue(env.DB, 'codex_channel_enabled'),
+          getSettingValue(env.DB, 'codex_models'),
         ]);
+        if (codexEnabled && codexChannelEnabled === 'true') {
+          models.push({ id: 'codex', name: 'Codex (your PC)', provider: 'codex', tier: 'local' });
+          for (const model of (codexModels || '').split(',').map((name) => name.trim()).filter(Boolean)) {
+            models.push({ id: `codex:${model}`, name: `Codex — ${model}`, provider: 'codex', tier: 'local' });
+          }
+        }
         const hasOpenRouter = orEnabled ? (env.OPENROUTER_API_KEY || await getSettingValue(env.DB, 'openrouter_key')) : null;
 
         // Fetch live models from OpenRouter (skip entirely if disabled)
@@ -2970,8 +3213,12 @@ export default {
       // ---- File Upload (R2) ----
       if (path === '/api/upload' && request.method === 'POST') {
         const formData = await request.formData();
-        const file = formData.get('file') as File;
-        if (!file) return json({ error: 'No file provided' }, 400);
+        const fileEntry = formData.get('file');
+        // Runtime type-guard, not a bare cast: a text field named "file" is a
+        // string, not a File — `.size`/`.name`/`.stream()` would then throw a
+        // raw 500 instead of a clean 400.
+        if (!fileEntry || typeof fileEntry === 'string') return json({ error: 'No file provided' }, 400);
+        const file = fileEntry as File;
         if (file.size > 20 * 1024 * 1024) return json({ error: 'File too large (max 20MB)' }, 413);
 
         const ext = file.name.split('.').pop() || 'bin';

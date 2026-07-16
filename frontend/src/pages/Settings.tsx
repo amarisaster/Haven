@@ -10,6 +10,7 @@ import {
   archiveCompanion, setActiveCompanionId, activeCompanionId,
   exportCompanion, getStorageUsage, clearChatFiles,
   getAuthStatus, generateAuthToken, saveAuthToken, getAuthToken, clearAuthToken, revokeAuthToken,
+  getCodexPairStatus, generateCodexPairToken, revokeCodexPairToken,
   pushPreference, removePreference,
 } from '../lib/api';
 import { getTTSSettings, saveTTSSettings, getBrowserVoices } from '../lib/tts';
@@ -403,6 +404,9 @@ export default function Settings({ onImport, onBack }: SettingsProps) {
 
       {/* Security */}
       <SecuritySection sectionStyle={sectionStyle} btnStyle={btnStyle} />
+
+      {/* Codex bridge */}
+      <CodexBridgeSection sectionStyle={sectionStyle} btnStyle={btnStyle} />
 
       {/* Token Usage & Cost */}
       <UsageSection sectionStyle={sectionStyle} btnStyle={btnStyle} inputStyle={inputStyle} labelStyle={labelStyle} />
@@ -1411,6 +1415,120 @@ function SecuritySection({ sectionStyle, btnStyle }: { sectionStyle: React.CSSPr
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CodexBridgeSection({ sectionStyle, btnStyle }: { sectionStyle: React.CSSProperties; btnStyle: React.CSSProperties }) {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [pairingToken, setPairingToken] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [error, setError] = useState('');
+
+  const refreshStatus = () => {
+    getCodexPairStatus()
+      .then(status => setConfigured(status.configured))
+      .catch(() => setConfigured(null));
+  };
+
+  useEffect(() => {
+    refreshStatus();
+  }, []);
+
+  const handleGenerate = async () => {
+    setBusy(true);
+    setError('');
+    setPairingToken(null);
+    try {
+      const { token } = await generateCodexPairToken();
+      setPairingToken(token);
+      await getCodexPairStatus().then(status => setConfigured(status.configured));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not generate pairing token');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!pairingToken) return;
+    await navigator.clipboard.writeText(pairingToken);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRevoke = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await revokeCodexPairToken();
+      setPairingToken(null);
+      setConfigured(false);
+      setConfirmRevoke(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not revoke pairing token');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={sectionStyle}>
+      <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--haven-text)', marginBottom: '8px' }}>Codex bridge</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: configured ? '#22c55e' : '#ef4444',
+          display: 'inline-block', flexShrink: 0,
+        }} />
+        <span style={{ fontSize: '13px', color: 'var(--haven-text-secondary)' }}>
+          {configured === null ? 'Status unavailable' : configured ? 'Configured ✓' : 'Not configured'}
+        </span>
+      </div>
+
+      <p style={{ fontSize: '11px', color: 'var(--haven-text-muted)', marginTop: 0, marginBottom: '12px' }}>
+        Your companion works inside one dedicated folder on your PC. Run the bridge installer there and paste this token.
+      </p>
+
+      {pairingToken && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <code style={{
+              minWidth: 0, overflowWrap: 'anywhere', fontSize: '12px', color: 'var(--haven-text)',
+              background: 'var(--haven-card)', padding: '8px', borderRadius: 4,
+              border: '1px solid var(--haven-border)',
+            }}>
+              {pairingToken}
+            </code>
+            <button onClick={handleCopy} style={{ ...btnStyle, fontSize: '12px', padding: '4px 10px', flexShrink: 0 }}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <p style={{ fontSize: '11px', color: '#f59e0b', margin: 0 }}>
+            Shown once — paste it into the bridge installer on your PC.
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button onClick={handleGenerate} disabled={busy} style={btnStyle}>
+          {busy ? 'Working...' : 'Generate pairing token'}
+        </button>
+        {configured && (!confirmRevoke ? (
+          <button onClick={() => setConfirmRevoke(true)} disabled={busy} style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef4444' }}>
+            Revoke
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', color: '#ef4444' }}>Are you sure?</span>
+            <button onClick={handleRevoke} disabled={busy} style={{ ...btnStyle, color: '#ef4444', borderColor: '#ef4444' }}>Yes, revoke</button>
+            <button onClick={() => setConfirmRevoke(false)} disabled={busy} style={btnStyle}>Cancel</button>
+          </div>
+        ))}
+      </div>
+      {error && <div style={{ fontSize: '12px', color: '#f87171', marginTop: 10 }}>{error}</div>}
     </div>
   );
 }

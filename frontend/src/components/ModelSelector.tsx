@@ -25,6 +25,7 @@ const PROVIDER_EMOJI: Record<string, string> = {
   xai: '🌀',
   moonshot: '🌙',
   custom: '🛠️',
+  codex: '🛠️',
 };
 
 function getFavorites(): Set<string> {

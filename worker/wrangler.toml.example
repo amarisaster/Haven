@@ -13,6 +13,16 @@ database_id = "your-d1-database-id"
 binding = "FILES"
 bucket_name = "haven-files"
 
+# Required for the Codex bridge feature (Settings -> Codex bridge + bridge/).
+# Without this binding, enabling the codex channel will fail at runtime.
+[[durable_objects.bindings]]
+name = "CODEX_RELAY"
+class_name = "CodexRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CodexRelay"]
+
 [vars]
 # Set these via wrangler secret put or in your dashboard
 # OPENROUTER_API_KEY = "sk-or-..."

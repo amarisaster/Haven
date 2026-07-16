@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Message, ToolCallRecord } from '../lib/types';
+import type { Message, ToolCallRecord, StreamEvent } from '../lib/types';
 import type { ModelInfo } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId, getCodexRunContext, persistCodexMessage, uploadFile } from '../lib/api';
+import { sendChatCodex, setCodexProviderActive, subscribeCodexPresence } from '../lib/codex-ws';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
 import ChatMessages from './ChatMessages';
@@ -22,6 +23,14 @@ interface ChatContainerProps {
 const LS_FONT = 'haven-font-size';
 const LS_MODEL = 'haven-model';
 const LS_PROVIDER = 'haven-provider';
+
+function xmlEscape(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function codexDiffTag(file: string, changeType = 'update', summary?: string): string {
+  return `<codex-diff file="${xmlEscape(file)}" change="${xmlEscape(changeType)}">${summary ? xmlEscape(summary) : ''}</codex-diff>`;
+}
 
 export default function ChatContainer({ threadId, onThreadCreated, companionName, companionAvatar, onBack }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -45,6 +54,8 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [userStatus, setUserStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [codexGear, setCodexGear] = useState<'ask' | 'code'>('ask');
+  const [codexOnline, setCodexOnline] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const sendingRef = useRef(false);
 
@@ -94,6 +105,15 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   useEffect(() => { loadWallpaper(wpKey).then(setWallpaper); }, [wpKey, companionName]);
   useEffect(() => { localStorage.setItem(LS_MODEL, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(LS_PROVIDER, selectedProvider); }, [selectedProvider]);
+  useEffect(() => {
+    const active = selectedProvider === 'codex';
+    setCodexProviderActive(active);
+    const unsubscribe = subscribeCodexPresence(setCodexOnline);
+    return () => {
+      unsubscribe();
+      setCodexProviderActive(false);
+    };
+  }, [selectedProvider]);
   useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); pushPreference('thinking', String(thinking)); }, [thinking]);
   useEffect(() => { localStorage.setItem('haven-websearch', String(webSearch)); pushPreference('web_search', String(webSearch)); }, [webSearch]);
 
@@ -134,9 +154,49 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let notice: string | undefined;
     let realUserId: string | undefined;
     let realCompanionId: string | undefined;
+    let codexCompleted = false;
+    let streamFailed = false;
 
     try {
-      for await (const event of sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, webSearch, controller.signal)) {
+      let events;
+      if (selectedProvider === 'codex') {
+        const context = await getCodexRunContext(threadId);
+        let attachments: Array<{ type: 'image'; key: string; name: string }> | undefined;
+        if (image) {
+          const blob = await fetch(image).then((response) => response.blob());
+          const mime = blob.type || image.match(/^data:([^;,]+)/)?.[1] || 'image/png';
+          const subtype = mime.split('/')[1]?.split('+')[0] || 'png';
+          const extension = subtype === 'jpeg' ? 'jpg' : subtype.replace(/[^a-zA-Z0-9]/g, '') || 'png';
+          const name = `image.${extension}`;
+          const uploaded = await uploadFile(new File([blob], name, { type: mime }));
+          const filePrefix = '/api/files/';
+          if (!uploaded.url.startsWith(filePrefix) || uploaded.url.length === filePrefix.length) {
+            throw new Error('Upload returned an invalid file URL');
+          }
+          attachments = [{ type: 'image', key: uploaded.url.slice(filePrefix.length), name }];
+        }
+        const persisted = await persistCodexMessage(threadId, 'user', persistedContent);
+        realUserId = persisted.id;
+        currentThreadId = persisted.threadId;
+        if (!threadId) onThreadCreated(persisted.threadId);
+        const requestId = crypto.randomUUID();
+        events = sendChatCodex({
+          prompt: persistedContent,
+          systemPrompt: context.systemPrompt,
+          companionId: context.companionId,
+          companionName: context.companionName,
+          mcpServers: context.mcpServers,
+          gear: codexGear,
+          requestId,
+          threadKey: currentThreadId,
+          ...(attachments && { attachments }),
+          ...(selectedModel.startsWith('codex:') && { model: selectedModel.slice('codex:'.length) }),
+        }, controller.signal);
+      } else {
+        events = sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, webSearch, controller.signal);
+      }
+
+      for await (const event of events) {
         switch (event.type) {
           case 'thread':
             if (event.threadId && !currentThreadId) {
@@ -150,6 +210,15 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               setStreamingContent(fullContent);
             }
             break;
+          case 'file_change': {
+            const codexEvent = event as StreamEvent;
+            if (codexEvent.file) {
+              const tag = codexDiffTag(codexEvent.file, codexEvent.changeType, codexEvent.summary);
+              fullContent += `${fullContent && !fullContent.endsWith('\n') ? '\n' : ''}${tag}\n`;
+              setStreamingContent(fullContent);
+            }
+            break;
+          }
           case 'tools': {
             // Worker emits one event with all tool results at the end of a
             // tool-calling inference round. We map each to a compact record
@@ -187,6 +256,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             }
             break;
           case 'complete':
+            codexCompleted = selectedProvider === 'codex';
             responseModel = event.model || selectedModel;
             // Worker strips [react: emoji] / <think> blocks and sends the
             // CLEAN text here. Prefer it over the chunk-accumulated content
@@ -203,9 +273,15 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             if ((event as any).companion_message_id) realCompanionId = (event as any).companion_message_id;
             break;
           case 'error':
+            streamFailed = true;
             setError(event.message || 'Stream error');
             break;
         }
+      }
+
+      if (selectedProvider === 'codex' && codexCompleted && currentThreadId && fullContent.trim()) {
+        const persisted = await persistCodexMessage(currentThreadId, 'companion', fullContent, 'codex');
+        realCompanionId = persisted.id;
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') { sendingRef.current = false; return; }
@@ -217,7 +293,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     // hit the right row. Done in a single setMessages to avoid two renders.
     if (realUserId) {
       setMessages((prev) => prev.map((m) =>
-        m.id === userMsg.id ? { ...m, id: realUserId! } : m
+        m.id === userMsg.id ? { ...m, id: realUserId!, thread_id: currentThreadId || m.thread_id } : m
       ));
     }
 
@@ -235,10 +311,10 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       };
       setMessages((prev) => [...prev, companionMsg]);
       if (fullContent) notifyCompanionMessage(companionName, fullContent);
-    } else if (!error) {
+    } else if (!streamFailed) {
       setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
     }
-  }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking, webSearch]);
+  }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking, webSearch, codexGear, companionName]);
 
   const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
     // Find the index of the edited message
@@ -263,9 +339,29 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     let responseModel = '';
     let toolCalls: ToolCallRecord[] = [];
     let notice: string | undefined;
+    let codexCompleted = false;
 
     try {
-      for await (const event of sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking, webSearch, controller.signal)) {
+      // Edits must route by provider exactly like handleSend — sending
+      // provider "codex" down the SSE lane makes the worker treat it as an
+      // inference model (upstream 401, live bug 2026-07-16).
+      let events;
+      if (selectedProvider === 'codex') {
+        const context = await getCodexRunContext(threadId);
+        events = sendChatCodex({
+          prompt: newContent,
+          systemPrompt: context.systemPrompt,
+          companionId: context.companionId,
+          companionName: context.companionName,
+          mcpServers: context.mcpServers,
+          gear: codexGear,
+          requestId: crypto.randomUUID(),
+          threadKey: threadId,
+        }, controller.signal);
+      } else {
+        events = sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking, webSearch, controller.signal);
+      }
+      for await (const event of events) {
         switch (event.type) {
           case 'chunk':
             if (event.content) {
@@ -273,6 +369,15 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               setStreamingContent(fullContent);
             }
             break;
+          case 'file_change': {
+            const codexEvent = event as StreamEvent;
+            if (codexEvent.file) {
+              const tag = codexDiffTag(codexEvent.file, codexEvent.changeType, codexEvent.summary);
+              fullContent += `${fullContent && !fullContent.endsWith('\n') ? '\n' : ''}${tag}\n`;
+              setStreamingContent(fullContent);
+            }
+            break;
+          }
           case 'tools': {
             const results = (event.results as any[]) || [];
             toolCalls = results.map(r => ({
@@ -291,6 +396,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             break;
           case 'complete':
             responseModel = event.model || selectedModel;
+            codexCompleted = selectedProvider === 'codex';
             if (typeof event.content === 'string' && event.content.length > 0) {
               fullContent = event.content;
               setStreamingContent(fullContent);
@@ -308,8 +414,15 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
 
     setStreamingContent(null);
     if (fullContent || toolCalls.length > 0 || notice) {
+      let persistedId: string | undefined;
+      if (codexCompleted && threadId && fullContent.trim()) {
+        try {
+          const persisted = await persistCodexMessage(threadId, 'companion', fullContent, 'codex');
+          persistedId = persisted.id;
+        } catch { /* reconciles on reload */ }
+      }
       const companionMsg: Message = {
-        id: `comp-${Date.now()}`,
+        id: persistedId ?? `comp-${Date.now()}`,
         thread_id: threadId || '',
         role: 'companion',
         content: fullContent,
@@ -323,7 +436,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     } else if (!error) {
       setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
     }
-  }, [messages, threadId, selectedModel, selectedProvider, thinking, webSearch]);
+  }, [messages, threadId, selectedModel, selectedProvider, thinking, webSearch, codexGear]);
 
   const handleDeleteMessage = useCallback(async (messageId: string) => {
     // Optimistic: drop from the list immediately. If the server delete
@@ -391,9 +504,59 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
   }, []);
 
+  const handleRevertFile = useCallback(async (file: string) => {
+    if (!threadId || streamingContent !== null) return;
+    setError(null);
+    setStreamingContent('');
+    const requestId = crypto.randomUUID();
+    let confirmation = '';
+    let completed = false;
+    try {
+      // Revert must land in the SAME companion folder the run used.
+      const context = await getCodexRunContext(threadId);
+      for await (const event of sendChatCodex({
+        mode: 'revert', paths: [file], requestId,
+        companionId: context.companionId, companionName: context.companionName,
+      })) {
+        if (event.type === 'file_change' && event.file) {
+          confirmation += codexDiffTag(event.file, event.changeType || 'reverted', event.summary);
+          setStreamingContent(confirmation);
+        } else if (event.type === 'complete') {
+          completed = true;
+        } else if (event.type === 'error') {
+          setError(event.message || 'Revert failed');
+        } else if (event.type === 'notice' && event.message) {
+          setError(event.message);
+        }
+      }
+      if (completed && confirmation) {
+        const persisted = await persistCodexMessage(threadId, 'companion', confirmation, 'codex');
+        setMessages((prev) => [...prev, {
+          id: persisted.id,
+          thread_id: persisted.threadId,
+          role: 'companion',
+          content: confirmation,
+          model: 'codex',
+          created_at: new Date().toISOString(),
+        }]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Revert failed');
+    } finally {
+      setStreamingContent(null);
+    }
+  }, [threadId, streamingContent]);
+
   const adjustFont = (delta: number) => {
     setFontSize((prev) => Math.max(12, Math.min(24, prev + delta)));
   };
+
+  const displayedCompanionPresence = selectedProvider === 'codex'
+    ? (codexOnline ? 'online' : 'offline')
+    : (companionStatus.presence || 'online');
+  const displayedCompanionStatus = selectedProvider === 'codex' && !codexOnline
+    ? 'PC offline'
+    : (companionStatus.custom_status || displayedCompanionPresence);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
@@ -434,21 +597,21 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
             )}
             <span style={{
               position: 'absolute', bottom: 0, right: 0, width: '8px', height: '8px', borderRadius: '50%',
-              background: { online: '#4ade80', idle: '#facc15', dnd: '#f87171', offline: '#6b7280' }[companionStatus.presence || 'online'] || '#4ade80',
+              background: { online: '#4ade80', idle: '#facc15', dnd: '#f87171', offline: '#6b7280' }[displayedCompanionPresence] || '#4ade80',
               border: '2px solid var(--haven-surface)',
             }} />
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--haven-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{companionName}</div>
             <div
-              title={companionStatus.custom_status || companionStatus.presence || 'online'}
+              title={displayedCompanionStatus}
               style={{
                 fontSize: '10px', color: 'var(--haven-text-secondary)', lineHeight: '1.3',
                 display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
                 overflow: 'hidden', maxWidth: '320px', wordBreak: 'break-word',
               }}
             >
-              {companionStatus.custom_status || companionStatus.presence || 'online'}
+              {displayedCompanionStatus}
             </div>
           </div>
         </div>
@@ -631,14 +794,30 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         onReactMessage={handleReactMessage}
         onDeleteMessage={handleDeleteMessage}
         onRegenerateMessage={handleRegenerateMessage}
+        onRevertFile={handleRevertFile}
       />
 
       {/* Input */}
-      <ChatInput
-        onSend={handleSend}
-        disabled={streamingContent !== null}
-        placeholder={threadId ? `Message ${companionName}...` : `Start a new conversation with ${companionName}...`}
-      />
+      <div style={{ position: 'relative' }}>
+        {selectedProvider === 'codex' && (
+          <button
+            onClick={() => setCodexGear((current) => current === 'ask' ? 'code' : 'ask')}
+            title={codexGear === 'ask' ? 'Ask mode (read-only)' : 'Code mode (workspace write)'}
+            style={{
+              position: 'absolute', right: '58px', bottom: '20px', zIndex: 2,
+              height: '28px', minWidth: '42px', padding: '0 7px', borderRadius: '14px',
+              border: '1px solid var(--haven-border)', cursor: 'pointer', fontSize: '10px',
+              background: codexGear === 'code' ? 'var(--haven-accent)' : 'var(--haven-surface)',
+              color: codexGear === 'code' ? 'white' : 'var(--haven-text-secondary)',
+            }}
+          >{codexGear === 'ask' ? 'Ask' : 'Code'}</button>
+        )}
+        <ChatInput
+          onSend={handleSend}
+          disabled={streamingContent !== null}
+          placeholder={threadId ? `Message ${companionName}...` : `Start a new conversation with ${companionName}...`}
+        />
+      </div>
 
       {/* Model settings panel */}
       {modelSettingsTarget && (

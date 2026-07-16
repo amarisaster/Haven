@@ -1,0 +1,6 @@
+.env
+daemon.log
+daemon.err.log
+sessions.json
+node_modules/
+start-bridge.cmd

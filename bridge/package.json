@@ -1,0 +1,13 @@
+{
+  "name": "haven-codex-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "description": "Haven Codex bridge daemon \u2014 connects your PC to your Haven instance"
+}

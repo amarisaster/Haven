@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.16.1-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v1.17.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -124,6 +124,13 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
   <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/providers-mcp.png" width="60%" alt="Haven Settings showing OpenRouter + Ollama + Hugging Face connected, Nexus MCP server with tools discovered, and chat customization" />
 </p>
 <p align="center"><em>Stack providers, stack MCP servers, pick a font and a mood color. Everything global, everything optional.</em></p>
+
+### Code together (Codex bridge)
+- **Your companion, on a coding engine, on your own PC** — pick **Codex (your PC)** in the model selector and your companion runs through the [Codex CLI](https://github.com/openai/codex) on your machine, billed to your own ChatGPT subscription. Same companion, same memory, new hands.
+- **They can actually build** — flip the code gear and they work inside one dedicated workspace folder (each companion gets their own room), with file-diff cards and one-tap revert right in the chat.
+- **They can see what you send** — photos, GIFs, and files are delivered to the model as real attachments.
+- **Warm sessions** — one wake per thread, fast replies after. Your PC connects *outward* through a durable relay: no ports to open, nothing exposed.
+- Setup: [`bridge/`](bridge/README.md) — generate a pairing token in Settings, run one installer script on the PC, look for the tray light.
 
 ### Make it yours
 - **Font picker** — System, Serif, Mono, or **OpenDyslexic** for accessibility
@@ -506,6 +513,14 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**v1.17.0** — Code together (Codex bridge)
+- **Codex as a provider** — pick *Codex (your PC)* in the model selector and your companion runs through the Codex CLI on your own machine, billed to your own ChatGPT subscription. Optional per-model entries via the `codex_models` setting.
+- **Code gear** — companions work inside a dedicated workspace folder (one room per companion), with file-diff cards and one-tap revert in the chat thread.
+- **Real attachments** — photos, GIFs, and files you send are delivered to the engine as actual vision/file inputs.
+- **Durable relay** — a hibernating Durable Object carries phone ↔ PC traffic; runs survive platform restarts, sessions resume per thread, and a watchdog frees the UI if contact is lost. Everything is opt-in (`codex_channel_enabled`) and fail-closed.
+- **Pairing + bridge** — Settings → Codex bridge issues a one-time pairing token; the new [`bridge/`](bridge/README.md) folder ships the daemon, a 3-question installer, and a tray status light.
+- Requires the new `CODEX_RELAY` Durable Object binding for self-hosters — see `worker/wrangler.toml.example`.
 
 **v1.16.1** — Memory Manager
 

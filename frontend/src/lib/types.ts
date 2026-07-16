@@ -55,13 +55,17 @@ export interface Identity {
 }
 
 export interface StreamEvent {
-  type: 'thread' | 'chunk' | 'complete' | 'error' | 'tools' | 'reaction';
+  type: 'thread' | 'chunk' | 'complete' | 'error' | 'tools' | 'reaction' | 'notice' | 'file_change';
   threadId?: string;
   content?: string;
   model?: string;
   message?: string;
   results?: unknown[]; // tool results (type: 'tools')
   emoji?: string;      // reaction emoji (type: 'reaction')
+  notice?: string;
+  file?: string;
+  changeType?: string;
+  summary?: string;
 }
 
 export interface ModelInfo {

@@ -14,6 +14,7 @@ interface ChatMessagesProps {
   onReactMessage: (messageId: string, emoji: string) => void;
   onDeleteMessage?: (messageId: string) => void;
   onRegenerateMessage?: (messageId: string) => void;
+  onRevertFile?: (file: string) => void;
 }
 
 function getWallpaperStyle(wallpaper: string): React.CSSProperties {
@@ -62,6 +63,7 @@ export default function ChatMessages({
   onReactMessage,
   onDeleteMessage,
   onRegenerateMessage,
+  onRevertFile,
 }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -167,6 +169,7 @@ export default function ChatMessages({
           onReact={onReactMessage}
           onDelete={onDeleteMessage}
           onRegenerate={onRegenerateMessage}
+          onRevertFile={onRevertFile}
         />
       ))}
 
@@ -185,6 +188,7 @@ export default function ChatMessages({
           fontFamily={fontFamily}
           textColor={textColor}
           companionAvatar={companionAvatar}
+          onRevertFile={onRevertFile}
         />
       )}
 

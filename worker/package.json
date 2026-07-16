@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "deploy": "wrangler deploy"
   },
   "keywords": [],
@@ -15,5 +15,9 @@
     "@cloudflare/workers-types": "^4.20260317.1",
     "typescript": "^6.0.2",
     "wrangler": "^4.78.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.20",
+    "vitest": "^4.1.0"
   }
 }
