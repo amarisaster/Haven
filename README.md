@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.17.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v2.0.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -514,7 +514,7 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 
 ## Recent updates
 
-**v1.17.0** — Code together (Codex bridge)
+**v2.0.0** — Code together (Codex bridge)
 - **Codex as a provider** — pick *Codex (your PC)* in the model selector and your companion runs through the Codex CLI on your own machine, billed to your own ChatGPT subscription. Optional per-model entries via the `codex_models` setting.
 - **Code gear** — companions work inside a dedicated workspace folder (one room per companion), with file-diff cards and one-tap revert in the chat thread.
 - **Real attachments** — photos, GIFs, and files you send are delivered to the engine as actual vision/file inputs.
