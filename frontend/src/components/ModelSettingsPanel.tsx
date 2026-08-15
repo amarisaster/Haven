@@ -123,7 +123,11 @@ export default function ModelSettingsPanel({ provider, modelId, modelName, model
                 {model && (
                   <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
                     {model.supports_tools === true && <span style={pillStyle('#8b5cf6')}>🔧 Tools</span>}
+                    {/* Three honest states. A missing pill used to mean either
+                        "can't see" or "never checked", which is why a dead
+                        vision fallback went unnoticed for months. */}
                     {model.supports_vision === true && <span style={pillStyle('#3b82f6')}>👁 Vision</span>}
+                    {model.supports_vision === false && <span style={pillStyle('#6b7280')}>🚫 No vision</span>}
                     {model.supports_thinking === true && <span style={pillStyle('#f59e0b')}>🧠 Thinking</span>}
                     {model.context_length && <span style={pillStyle('#6b7280')}>{model.context_length >= 1000000 ? `${(model.context_length / 1000000).toFixed(1)}M` : `${Math.round(model.context_length / 1000)}k`} ctx</span>}
                   </div>

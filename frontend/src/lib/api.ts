@@ -128,6 +128,31 @@ export const getThreads = () => get<Thread[]>('/api/threads');
 export const createThread = (title?: string) => post<{ id: string }>('/api/threads', { title });
 export const deleteThread = (id: string) => del(`/api/threads/${id}`);
 export const renameThread = (id: string, title: string) => put<{ success: boolean }>(`/api/threads/${id}`, { title });
+// "Private" thread — the worker skips the whole proactive-memory pass for it,
+// so a roleplay can't leak into long-term memory.
+export const setThreadEphemeral = (id: string, ephemeral: boolean) =>
+  put<{ success: boolean }>(`/api/threads/${id}`, { ephemeral });
+// What the model ACTUALLY receives for a thread, vs how much has ever been said
+// in it. Asked of the server because only the worker knows how it windows the
+// history — computing it client-side is what made the old counter wrong.
+export type ThreadContext = {
+  window_tokens: number;
+  window_messages: number;
+  archive_tokens: number;
+  archive_messages: number;
+  compacted: boolean;
+  compacted_messages: number;
+  summary_chars: number;
+};
+export const getThreadContext = (id: string) => get<ThreadContext>(`/api/threads/${id}/context`);
+
+// Fold older turns into a digest the companion carries as memory. Keeps the
+// most recent `keepRecent` messages verbatim. Deletes nothing.
+export const compactThread = (id: string, keepRecent = 20) =>
+  post<{ success: boolean; compacted_messages: number; kept_verbatim: number; summary: string }>(
+    `/api/threads/${id}/compact`, { keepRecent },
+  );
+
 export const deleteMessage = (id: string) => del(`/api/messages/${id}`);
 export async function reactMessage(messageId: string, emoji: string): Promise<{ reactions: string[] }> {
   const path = `/api/messages/${messageId}/react`;
@@ -235,6 +260,20 @@ export const getMemories = () => get<Array<Memory>>('/api/memories');
 export const addMemory = (data: { content: string; memory_type?: string; emotional_weight?: number }) => post('/api/memories', data);
 export const updateMemory = (data: { id: number; content?: string; memory_type?: string; emotional_weight?: number }) => put('/api/memories', data);
 export const deleteMemory = (id: number) => del(`/api/memories?id=${id}`);
+export const bulkDeleteMemories = (ids: number[]) => del(`/api/memories?ids=${ids.join(',')}`);
+
+// Consolidated long-term memory — the "dreaming" output. This exact text is
+// injected into every system prompt, so it needs to be readable and editable;
+// it used to be reachable only by hand-editing D1.
+export type MemoryState = {
+  consolidated_body: string | null;
+  last_consolidated_at: string | null;
+  msgs_since_extract?: number;
+};
+export const getMemoryState = () => get<MemoryState>('/api/memory-state');
+export const updateMemoryState = (consolidated_body: string) =>
+  put<{ success: boolean }>('/api/memory-state', { consolidated_body });
+export const clearMemoryState = () => del('/api/memory-state');
 
 // Models
 export const getModels = () => get<ModelInfo[]>('/api/models');
@@ -379,13 +418,16 @@ export async function* sendChat(
   thinking?: boolean,
   webSearch?: boolean,
   signal?: AbortSignal,
+  // Only honoured by the worker when it lazily creates the thread, so a new
+  // "private" chat is born flagged. Ignored for an existing thread.
+  ephemeral?: boolean,
 ): AsyncGenerator<{ type: string; content?: string; threadId?: string; model?: string; message?: string; results?: unknown[]; emoji?: string; notice?: string; user_message_id?: string; companion_message_id?: string }> {
   let res: Response;
   try {
     res = await fetch(`${apiBase()}/api/chat`, {
       method: 'POST',
       headers: scopedHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}), ...(webSearch ? { web_search: true } : {}) }),
+      body: JSON.stringify({ message, threadId, model, provider, ...(image ? { image } : {}), ...(thinking ? { thinking: true } : {}), ...(webSearch ? { web_search: true } : {}), ...(ephemeral ? { ephemeral: true } : {}) }),
       signal,
     });
   } catch (err) {

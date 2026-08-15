@@ -3,6 +3,9 @@ export interface Thread {
   title: string | null;
   last_message_at: string | null;
   created_at: string;
+  // 1 = "private": nothing from this thread feeds proactive memory extraction.
+  // Set from the chat header pill or the thread's ⋯ menu.
+  ephemeral?: number;
 }
 
 export interface ToolCallRecord {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, ToolCallRecord, StreamEvent } from '../lib/types';
 import type { ModelInfo } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId, getCodexRunContext, persistCodexMessage, uploadFile } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId, getCodexRunContext, persistCodexMessage, uploadFile, setThreadEphemeral, getThreadContext, compactThread, type ThreadContext } from '../lib/api';
 import { sendChatCodex, setCodexProviderActive, subscribeCodexPresence } from '../lib/codex-ws';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
@@ -11,6 +11,7 @@ import ModelSelector from './ModelSelector';
 import ModelSettingsPanel from './ModelSettingsPanel';
 import WallpaperPicker from './WallpaperPicker';
 import AuthMedia from './AuthMedia';
+import { loadCustomEmoji, useCustomEmojiList, renderEmojiText } from './MessageBubble';
 
 interface ChatContainerProps {
   threadId: string | null;
@@ -18,6 +19,9 @@ interface ChatContainerProps {
   companionName: string;
   companionAvatar?: string;
   onBack?: () => void;
+  // Persisted "private" flag of the open thread (1 = private). Optional so
+  // older callers keep compiling.
+  threadEphemeral?: number;
 }
 
 const LS_FONT = 'haven-font-size';
@@ -32,7 +36,7 @@ function codexDiffTag(file: string, changeType = 'update', summary?: string): st
   return `<codex-diff file="${xmlEscape(file)}" change="${xmlEscape(changeType)}">${summary ? xmlEscape(summary) : ''}</codex-diff>`;
 }
 
-export default function ChatContainer({ threadId, onThreadCreated, companionName, companionAvatar, onBack }: ChatContainerProps) {
+export default function ChatContainer({ threadId, onThreadCreated, companionName, companionAvatar, onBack, threadEphemeral }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(LS_MODEL) || 'openai/gpt-4o-mini');
@@ -42,6 +46,26 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     return saved ? parseInt(saved, 10) : 15;
   });
   const [wallpaper, setWallpaper] = useState('');
+  // "Private" thread — excluded from proactive memory extraction. Held locally
+  // before the first message, because the thread row doesn't exist until then;
+  // it's passed into the first sendChat so the row is born flagged.
+  const [isPrivate, setIsPrivate] = useState(false);
+
+  // Reset on a brand-new chat; adopt the persisted flag when opening a thread.
+  useEffect(() => {
+    setIsPrivate(threadId ? !!threadEphemeral : false);
+  }, [threadId, threadEphemeral]);
+
+  const togglePrivate = async () => {
+    const next = !isPrivate;
+    setIsPrivate(next);
+    if (!threadId) return; // no row yet — carried into the first sendChat
+    try {
+      await setThreadEphemeral(threadId, next);
+    } catch {
+      setIsPrivate(!next); // revert if the write failed
+    }
+  };
   const fontFamily = localStorage.getItem('haven-font-family') || undefined;
   const textColor = localStorage.getItem('haven-text-color') || undefined;
   const [showMenu, setShowMenu] = useState(false);
@@ -54,10 +78,22 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   const [companionStatus, setCompanionStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [userStatus, setUserStatus] = useState<{ custom_status: string | null; presence: string }>({ custom_status: null, presence: 'online' });
   const [models, setModels] = useState<ModelInfo[]>([]);
+  // Server-computed context usage. The old counter summed every message in the
+  // thread while the worker only ever sends a window of it, so a long thread
+  // read as catastrophically over the limit when the real payload was a
+  // fraction of that. Only the server knows how it windows, so it does the sum.
+  const [ctxInfo, setCtxInfo] = useState<ThreadContext | null>(null);
+  const [compacting, setCompacting] = useState(false);
   const [codexGear, setCodexGear] = useState<'ask' | 'code'>('ask');
   const [codexOnline, setCodexOnline] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const sendingRef = useRef(false);
+
+  // Custom-emoji cache for status lines (:name: → image). Subscribing re-renders
+  // the status once the emoji set finishes loading; the effect kicks the fetch in
+  // case no message bubble has mounted yet (e.g. an empty chat).
+  useCustomEmojiList();
+  useEffect(() => { loadCustomEmoji(); }, []);
 
   // Poll companion + user status from D1 (both live server-side so they stay
   // consistent across devices / sessions).
@@ -116,6 +152,29 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
   }, [selectedProvider]);
   useEffect(() => { localStorage.setItem('haven-thinking', String(thinking)); pushPreference('thinking', String(thinking)); }, [thinking]);
   useEffect(() => { localStorage.setItem('haven-websearch', String(webSearch)); pushPreference('web_search', String(webSearch)); }, [webSearch]);
+
+  // Refresh context usage when the thread changes or a turn completes.
+  const refreshCtx = useCallback(() => {
+    if (!threadId) { setCtxInfo(null); return; }
+    getThreadContext(threadId).then(setCtxInfo).catch(() => {});
+  }, [threadId]);
+  useEffect(() => { refreshCtx(); }, [refreshCtx, messages.length]);
+
+  const handleCompact = useCallback(async () => {
+    if (!threadId || compacting) return;
+    setShowMenu(false);
+    setCompacting(true);
+    setError(null);
+    try {
+      const r = await compactThread(threadId, 20);
+      refreshCtx();
+      setError(`Compacted ${r.compacted_messages} older messages into memory — the last ${r.kept_verbatim} stay word-for-word. Nothing was deleted.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Compaction failed');
+    } finally {
+      setCompacting(false);
+    }
+  }, [threadId, compacting, refreshCtx]);
 
   const handleModelChange = (model: string, provider: string) => {
     setSelectedModel(model);
@@ -193,7 +252,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
           ...(selectedModel.startsWith('codex:') && { model: selectedModel.slice('codex:'.length) }),
         }, controller.signal);
       } else {
-        events = sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, webSearch, controller.signal);
+        events = sendChat(persistedContent, threadId, selectedModel, selectedProvider, image, thinking, webSearch, controller.signal, isPrivate);
       }
 
       for await (const event of events) {
@@ -316,127 +375,38 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
   }, [threadId, selectedModel, selectedProvider, onThreadCreated, thinking, webSearch, codexGear, companionName]);
 
+  // Rewind the conversation to `fromIdx` and send `content` as the new turn
+  // there — the shared spine of both "edit a message" and "regenerate a reply".
+  //
+  // The rule both paths need: a branch REPLACES everything from that point on,
+  // it does not add a second copy alongside it. The screen has always truncated
+  // correctly; the D1 rows were the half that got left behind. That matters
+  // because the worker replays the thread's latest 50 rows on every turn
+  // (worker/src/index.ts:2121) — so any row still in the table keeps reaching
+  // the model no matter what the screen shows.
+  //
+  // Edit and regenerate each used to carry their own copy of this, and only
+  // regenerate's was ever (partly) right. One implementation so they can't
+  // drift apart again.
+  const rewindAndSend = useCallback(async (fromIdx: number, content: string, image?: string) => {
+    // Optimistic ids (temp-/comp-) never reached D1 — nothing to delete.
+    const doomed = messages.slice(fromIdx).filter(m => !m.id.startsWith('temp-') && !m.id.startsWith('comp-'));
+    for (const m of doomed) {
+      try { await deleteMessage(m.id); } catch { /* reconciles on reload */ }
+    }
+    // Truncate BEFORE the turn being replaced — handleSend re-inserts the user
+    // message optimistically and reconciles its real D1 id, so re-adding it
+    // here would double it up.
+    setMessages(messages.slice(0, fromIdx));
+    setTimeout(() => handleSend(content, image), 50);
+  }, [messages, handleSend]);
+
   const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
-    // Find the index of the edited message
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return;
-
-    // Truncate messages after the edited one
-    const truncated = messages.slice(0, idx);
-
-    // Update the edited message content
-    const editedMsg: Message = { ...messages[idx], content: newContent };
-    setMessages([...truncated, editedMsg]);
-
-    // Resend from the edited message
-    setError(null);
-    setStreamingContent('');
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    let fullContent = '';
-    let responseModel = '';
-    let toolCalls: ToolCallRecord[] = [];
-    let notice: string | undefined;
-    let codexCompleted = false;
-
-    try {
-      // Edits must route by provider exactly like handleSend — sending
-      // provider "codex" down the SSE lane makes the worker treat it as an
-      // inference model (upstream 401, live bug 2026-07-16).
-      let events;
-      if (selectedProvider === 'codex') {
-        const context = await getCodexRunContext(threadId);
-        events = sendChatCodex({
-          prompt: newContent,
-          systemPrompt: context.systemPrompt,
-          companionId: context.companionId,
-          companionName: context.companionName,
-          mcpServers: context.mcpServers,
-          gear: codexGear,
-          requestId: crypto.randomUUID(),
-          threadKey: threadId,
-        }, controller.signal);
-      } else {
-        events = sendChat(newContent, threadId, selectedModel, selectedProvider, undefined, thinking, webSearch, controller.signal);
-      }
-      for await (const event of events) {
-        switch (event.type) {
-          case 'chunk':
-            if (event.content) {
-              fullContent += event.content;
-              setStreamingContent(fullContent);
-            }
-            break;
-          case 'file_change': {
-            const codexEvent = event as StreamEvent;
-            if (codexEvent.file) {
-              const tag = codexDiffTag(codexEvent.file, codexEvent.changeType, codexEvent.summary);
-              fullContent += `${fullContent && !fullContent.endsWith('\n') ? '\n' : ''}${tag}\n`;
-              setStreamingContent(fullContent);
-            }
-            break;
-          }
-          case 'tools': {
-            const results = (event.results as any[]) || [];
-            toolCalls = results.map(r => ({
-              name: r?.name || r?.tool_name || 'tool',
-              server: r?.server_name || r?.server,
-              ok: r?.ok !== false && !r?.error,
-              arguments: r?.arguments,
-              result: r?.result,
-            }));
-            break;
-          }
-          case 'notice':
-            if (typeof (event as any).message === 'string') {
-              notice = (event as any).message;
-            }
-            break;
-          case 'complete':
-            responseModel = event.model || selectedModel;
-            codexCompleted = selectedProvider === 'codex';
-            if (typeof event.content === 'string' && event.content.length > 0) {
-              fullContent = event.content;
-              setStreamingContent(fullContent);
-            }
-            break;
-          case 'error':
-            setError(event.message || 'Stream error');
-            break;
-        }
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : 'Failed to resend');
-    }
-
-    setStreamingContent(null);
-    if (fullContent || toolCalls.length > 0 || notice) {
-      let persistedId: string | undefined;
-      if (codexCompleted && threadId && fullContent.trim()) {
-        try {
-          const persisted = await persistCodexMessage(threadId, 'companion', fullContent, 'codex');
-          persistedId = persisted.id;
-        } catch { /* reconciles on reload */ }
-      }
-      const companionMsg: Message = {
-        id: persistedId ?? `comp-${Date.now()}`,
-        thread_id: threadId || '',
-        role: 'companion',
-        content: fullContent,
-        model: responseModel || selectedModel,
-        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-        notice,
-        created_at: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, companionMsg]);
-      if (fullContent) notifyCompanionMessage(companionName, fullContent);
-    } else if (!error) {
-      setError('No response received — the model may be unavailable or the connection was interrupted. Try again.');
-    }
-  }, [messages, threadId, selectedModel, selectedProvider, thinking, webSearch, codexGear]);
+    // Resend the edited text in place of the original turn.
+    await rewindAndSend(idx, newContent, messages[idx].image);
+  }, [messages, rewindAndSend]);
 
   const handleDeleteMessage = useCallback(async (messageId: string) => {
     // Optimistic: drop from the list immediately. If the server delete
@@ -459,31 +429,14 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     if (userIdx === -1) return;
 
     const userMsgAtIdx = messages[userIdx];
-    const companionMsgAtIdx = messages[idx];
-    const userContent = userMsgAtIdx.content;
-    const userImage = userMsgAtIdx.image;
 
-    // Delete the old user + companion rows from D1 so handleSend's re-insert
-    // doesn't leave duplicates. Worker pulls ALL messages on each chat turn,
-    // so stale rows would get replayed to the model. Skip IDs that are still
-    // optimistic (temp-/comp-) — those never persisted.
-    const toDelete: string[] = [];
-    if (!userMsgAtIdx.id.startsWith('temp-') && !userMsgAtIdx.id.startsWith('comp-')) {
-      toDelete.push(userMsgAtIdx.id);
-    }
-    if (!companionMsgAtIdx.id.startsWith('temp-') && !companionMsgAtIdx.id.startsWith('comp-')) {
-      toDelete.push(companionMsgAtIdx.id);
-    }
-    for (const id of toDelete) {
-      try { await deleteMessage(id); } catch { /* ignore, reconciles on reload */ }
-    }
-
-    // Truncate UI before the user message so handleSend's optimistic insert
-    // doesn't double-up. handleSend re-adds the user turn + fires a fresh
-    // reply.
-    setMessages(messages.slice(0, userIdx));
-    setTimeout(() => handleSend(userContent, userImage), 50);
-  }, [messages, handleSend]);
+    // Replay that user turn to get a different reply. Previously this deleted
+    // ONLY the user row and the one companion row being regenerated, while the
+    // screen truncated everything below — so regenerating an older reply left
+    // every later message orphaned: invisible on screen, still replayed to the
+    // model. Rewinding from the user turn deletes the whole tail it hides.
+    await rewindAndSend(userIdx, userMsgAtIdx.content, userMsgAtIdx.image);
+  }, [messages, rewindAndSend]);
 
   const handleReactMessage = useCallback((messageId: string, emoji: string) => {
     setMessages((prev) =>
@@ -562,7 +515,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
       {/* Header */}
       <div style={{
-        display: 'flex', alignItems: 'center', padding: '8px 12px',
+        display: 'flex', alignItems: 'center', padding: '8px 12px 8px 6px',
         borderBottom: '1px solid var(--haven-border)', background: 'var(--haven-surface)',
         gap: '8px', flexShrink: 0, position: 'relative', zIndex: 21,
       }}>
@@ -611,7 +564,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
                 overflow: 'hidden', maxWidth: '320px', wordBreak: 'break-word',
               }}
             >
-              {displayedCompanionStatus}
+              {renderEmojiText(displayedCompanionStatus)}
             </div>
           </div>
         </div>
@@ -626,7 +579,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
               {localStorage.getItem('haven-user-name') || 'You'}
             </div>
             <div style={{ fontSize: '9px', color: 'var(--haven-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100px' }}>
-              {userStatus.custom_status || userStatus.presence || 'online'}
+              {renderEmojiText(userStatus.custom_status || userStatus.presence || 'online')}
             </div>
           </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -653,11 +606,18 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
       {(() => {
         const currentModel = models.find(m => m.id === selectedModel && m.provider === selectedProvider);
         const ctxMax = currentModel?.context_length || 128000;
-        const est = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+        // What the model actually receives — NOT the whole archive. Falls back
+        // to a local estimate only until the server figures respond.
+        const est = ctxInfo
+          ? ctxInfo.window_tokens
+          : messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
         const pct = ctxMax > 0 ? est / ctxMax : 0;
         const tokenColor = pct > 0.8 ? '#f87171' : pct > 0.5 ? '#facc15' : 'var(--haven-text-muted)';
         const tokenLabel = est < 1000 ? `~${est}` : `~${(est / 1000).toFixed(1)}k`;
         const maxLabel = ctxMax >= 1000000 ? `${(ctxMax / 1000000).toFixed(1)}M` : `${Math.round(ctxMax / 1000)}k`;
+        // Past half the window, offer compaction rather than waiting for the
+        // silent truncation at the top end. Never acts on its own.
+        const suggestCompact = pct > 0.5;
         return (
           <div style={{
             display: 'flex', alignItems: 'center',
@@ -712,6 +672,23 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
                   lineHeight: 1,
                 }}
               >🌐</button>
+              {/* Private thread — excluded from proactive memory extraction.
+                  Works before the first message: with no thread row yet the
+                  flag rides along on the first send. */}
+              <button
+                onClick={togglePrivate}
+                title={isPrivate
+                  ? 'Private ON — nothing from this thread is saved to memory'
+                  : 'Private OFF — this thread can be used for memory'}
+                aria-label="Toggle private thread"
+                style={{
+                  background: isPrivate ? 'var(--haven-accent)' : 'transparent',
+                  border: isPrivate ? 'none' : '1px solid var(--haven-border)',
+                  borderRadius: '4px', padding: '2px 5px', cursor: 'pointer',
+                  fontSize: '10px', color: isPrivate ? 'white' : 'var(--haven-text-muted)',
+                  lineHeight: 1,
+                }}
+              >🔒</button>
               {/* Menu */}
               <div style={{ position: 'relative' }}>
                 <button
@@ -743,14 +720,47 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
                         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--haven-card)')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >🎨 Wallpaper</button>
+                      {/* Compact — manual only. Folds older turns into memory he
+                          carries, keeping the last 20 word-for-word. Messages
+                          are never deleted; only what's sent to him narrows. */}
+                      {threadId && (
+                        <button
+                          onClick={handleCompact}
+                          disabled={compacting}
+                          title={ctxInfo
+                            ? `Fold the older ${Math.max(ctxInfo.archive_messages - 20, 0)} messages into memory. Nothing is deleted.`
+                            : 'Fold older messages into memory. Nothing is deleted.'}
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '6px 8px', background: 'transparent', border: 'none', color: suggestCompact ? '#facc15' : 'var(--haven-text-secondary)', fontSize: '12px', cursor: compacting ? 'default' : 'pointer', borderRadius: '6px', textAlign: 'left' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--haven-card)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >🗜 {compacting ? 'Compacting…' : 'Compact thread'}</button>
+                      )}
                     </div>
                   </>
                 )}
               </div>
             </div>
 
-            {/* Right: token counter */}
-            <span style={{ color: tokenColor, flexShrink: 0 }}>{tokenLabel}/{maxLabel}</span>
+            {/* Right: context usage. Title carries the archive figure so the
+                distinction between "sent to him" and "said in here" is
+                available without cluttering a 10px bar. */}
+            <span
+              onClick={suggestCompact ? handleCompact : undefined}
+              title={ctxInfo
+                ? `Sent to ${companionName}: ~${ctxInfo.window_tokens.toLocaleString()} tokens (${ctxInfo.window_messages} messages)\n`
+                  + `Whole thread: ~${ctxInfo.archive_tokens.toLocaleString()} tokens (${ctxInfo.archive_messages} messages)\n`
+                  + (ctxInfo.compacted ? `${ctxInfo.compacted_messages} older messages folded into memory\n` : '')
+                  + (suggestCompact ? '\nTap to compact.' : '')
+                : undefined}
+              style={{
+                color: tokenColor, flexShrink: 0,
+                cursor: suggestCompact ? 'pointer' : 'default',
+                display: 'flex', alignItems: 'center', gap: '3px',
+              }}
+            >
+              {ctxInfo?.compacted && <span title="This thread has been compacted">🗜</span>}
+              {compacting ? 'compacting…' : `${tokenLabel}/${maxLabel}`}
+            </span>
           </div>
         );
       })()}
