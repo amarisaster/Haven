@@ -70,6 +70,23 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
   const [favorites, setFavorites] = useState<Set<string>>(getFavorites);
   const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem(LS_FILTER) as Filter) || 'all');
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Vertical anchor for the panel. The list is centred in the VIEWPORT rather
+  // than hung off the button, so on a phone it can't spill sideways across the
+  // chat. Centring horizontally needs position:fixed, which costs us the
+  // button-relative `top: 100%` — so we measure the button on open.
+  const [anchorTop, setAnchorTop] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const rect = btnRef.current?.getBoundingClientRect();
+      if (rect) setAnchorTop(rect.bottom + 4);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open]);
 
   useEffect(() => {
     getModels()
@@ -238,6 +255,7 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
+        ref={btnRef}
         onClick={() => setOpen(!open)}
         style={{
           display: 'flex', alignItems: 'center', gap: '4px',
@@ -257,9 +275,15 @@ export default function ModelSelector({ selectedModel, selectedProvider, onModel
         <div
           className="hide-scrollbar"
           style={{
-            position: 'absolute', top: '100%', right: 0, marginTop: '4px',
+            position: 'fixed', top: `${anchorTop}px`,
+            left: '50%', transform: 'translateX(-50%)',
             background: 'var(--haven-surface)', border: '1px solid var(--haven-border)',
-            borderRadius: '10px', width: '260px', maxHeight: '350px', overflowY: 'scroll',
+            borderRadius: '10px',
+            // Never wider than the screen — on a narrow phone the list shrinks
+            // to fit instead of hanging off an edge.
+            width: 'min(260px, calc(100vw - 24px))',
+            maxHeight: `min(350px, calc(100vh - ${anchorTop}px - 16px))`,
+            overflowY: 'scroll',
             zIndex: 100, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
             WebkitOverflowScrolling: 'touch' as any, touchAction: 'pan-y',
             overscrollBehavior: 'contain',

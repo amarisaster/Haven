@@ -3,13 +3,14 @@ import type { Message } from '../lib/types';
 import { speak, stop } from '../lib/tts';
 import { apiBase, authedFetch } from '../lib/api';
 import AuthMedia from './AuthMedia';
+import { parseServerDate } from '../lib/time';
 
 let _emojiCache: Map<string, string> | null = null;
 let _emojiFetching = false;
 // Subscribers re-render once the cache arrives — without this, reactions that
 // painted before the fetch finished stayed as raw :shortcode: text forever.
 const _emojiListeners: Array<() => void> = [];
-function loadCustomEmoji() {
+export function loadCustomEmoji() {
   if (_emojiCache || _emojiFetching) return;
   _emojiFetching = true;
   const base = apiBase();
@@ -28,7 +29,7 @@ function loadCustomEmoji() {
 export function refreshEmojiCache() { _emojiCache = null; loadCustomEmoji(); }
 
 // Live view of the custom emoji set for pickers; updates when the cache loads.
-function useCustomEmojiList(): Array<[string, string]> {
+export function useCustomEmojiList(): Array<[string, string]> {
   const [list, setList] = useState<Array<[string, string]>>(() => _emojiCache ? [..._emojiCache.entries()] : []);
   useEffect(() => {
     const notify = () => setList(_emojiCache ? [..._emojiCache.entries()] : []);
@@ -53,6 +54,31 @@ function renderReaction(r: string): React.ReactNode {
     if (url) return <AuthMedia url={url} type="img" alt={m[1]} style={{ display: 'inline-block', width: '18px', height: '18px', verticalAlign: 'middle', objectFit: 'contain' }} />;
   }
   return r;
+}
+
+// Render an inline plain string, substituting :name: custom-emoji shortcodes with their
+// images (same set + cache as message bodies). Non-emoji text and unknown :names: pass
+// through as literal text. Used for status lines so a :yessir: in a status shows the image.
+// Sizes to the surrounding font (em) since statuses render at small sizes.
+export function renderEmojiText(text: string): React.ReactNode {
+  if (!text || !_emojiCache) return text;
+  const parts: React.ReactNode[] = [];
+  const re = /:([a-zA-Z0-9_-]+):/g;
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const url = _emojiCache.get(m[1]);
+    if (!url) continue; // unknown name — leave the literal :text: in place
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(
+      <AuthMedia key={`se-${key++}`} url={url} type="img" alt={m[1]}
+        style={{ display: 'inline-block', width: '1.15em', height: '1.15em', verticalAlign: 'middle', objectFit: 'contain' }} />,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts.length ? parts : text;
 }
 
 interface MessageBubbleProps {
@@ -291,7 +317,7 @@ function parseThinking(content: string): { thinking: string | null; isThinking: 
 }
 
 function formatTimestamp(dateStr: string): string {
-  const d = new Date(dateStr);
+  const d = parseServerDate(dateStr);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -746,7 +772,7 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.2)')}
                 onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-              >{emoji}</button>
+              >{renderReaction(emoji)}</button>
             ))}
             <button
               onClick={() => setShowEmojiInput(v => !v)}

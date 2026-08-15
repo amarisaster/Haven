@@ -3,7 +3,14 @@ import { apiBase, authedFetch } from '../lib/api';
 import AuthMedia from './AuthMedia';
 
 interface StickerPickerProps {
+  // Stickers are images — they ride as an attachment (a sticker IS the message).
   onSelect: (url: string) => void;
+  // Custom emoji are shortcodes — they belong INLINE in the message text, so the
+  // companion receives `:name:` (which the system prompt teaches it to read and
+  // MessageBubble renders as the image) instead of a bare URL it can only
+  // describe as "a link". Split from onSelect because the two tabs produce
+  // fundamentally different things, not two flavours of the same thing.
+  onSelectEmoji: (shortcode: string) => void;
   onClose: () => void;
 }
 
@@ -14,7 +21,7 @@ interface MediaItem {
   url: string;
 }
 
-export default function StickerPicker({ onSelect, onClose }: StickerPickerProps) {
+export default function StickerPicker({ onSelect, onSelectEmoji, onClose }: StickerPickerProps) {
   const [tab, setTab] = useState<'emoji' | 'sticker'>('sticker');
   const [emoji, setEmoji] = useState<MediaItem[]>([]);
   const [stickers, setStickers] = useState<MediaItem[]>([]);
@@ -94,7 +101,9 @@ export default function StickerPicker({ onSelect, onClose }: StickerPickerProps)
             <div
               key={item.id}
               title={item.name}
-              onClick={() => onSelect(`${apiBase()}${item.url}`)}
+              onClick={() => tab === 'emoji'
+                ? onSelectEmoji(`:${item.name}:`)
+                : onSelect(`${apiBase()}${item.url}`)}
               style={{
                 width: thumbSize, height: thumbSize, borderRadius: '8px',
                 cursor: 'pointer', transition: 'transform 0.1s',

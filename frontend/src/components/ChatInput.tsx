@@ -103,6 +103,28 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     }
   };
 
+  // Custom emoji go INTO the message text as `:name:`, not onto it as an
+  // attachment. Inserted at the caret so picking one mid-sentence lands where
+  // she's typing rather than at the end. The picker stays open — emoji are
+  // usually picked in twos and threes, unlike a sticker which IS the message.
+  const insertEmoji = (shortcode: string) => {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    // Keep shortcodes from fusing into neighbouring words (`hi:wave:` would not
+    // match the :name: pattern the renderer and the model both look for).
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const next = `${before}${lead}${shortcode}${after}`;
+    setText(next);
+    const caret = before.length + lead.length + shortcode.length;
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    });
+  };
+
   const handleGifSelect = (gifUrl: string) => {
     // Stage the GIF as a pending attachment instead of auto-sending. Lets
     // the user pick GIF first, then type text around it (the most natural
@@ -176,7 +198,13 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     <div style={{ position: 'relative', padding: '8px 12px 12px', background: 'var(--haven-bg)' }}>
       {/* GIF picker above */}
       {showGif && <GifPicker onSelect={handleGifSelect} onClose={() => setShowGif(false)} />}
-      {showStickers && <StickerPicker onSelect={(url) => { setPendingGif(url); setShowStickers(false); inputRef.current?.focus(); }} onClose={() => setShowStickers(false)} />}
+      {showStickers && (
+        <StickerPicker
+          onSelect={(url) => { setPendingGif(url); setShowStickers(false); inputRef.current?.focus(); }}
+          onSelectEmoji={insertEmoji}
+          onClose={() => setShowStickers(false)}
+        />
+      )}
 
       {/* Pending image preview */}
       {pendingImage && (
