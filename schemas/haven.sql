@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
     companion_id INTEGER NOT NULL DEFAULT 1 REFERENCES companion(id) ON DELETE CASCADE,
     title TEXT,
+    -- Marks a thread as excluded from proactive memory extraction.
+    ephemeral INTEGER NOT NULL DEFAULT 0,
     last_message_at TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );

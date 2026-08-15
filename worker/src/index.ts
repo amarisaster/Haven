@@ -11,6 +11,7 @@ interface Env {
   CODEX_RELAY: DurableObjectNamespace;
   OPENROUTER_API_KEY?: string;
   OLLAMA_URL?: string;
+  GIPHY_KEY?: string;
 }
 
 function getCorsHeaders(request: Request): Record<string, string> {
@@ -922,6 +923,11 @@ async function simpleCompletion(
       method: 'POST', headers,
       body: JSON.stringify({
         model, stream: false, options: { temperature: 0.3 },
+        // Reasoning models bill for a thinking block nobody reads on these
+        // background jobs (memory extraction, consolidation, compaction) and
+        // can return an empty `content` if generation is ever capped. Turning
+        // it off is cheaper and safer; models without thinking ignore the flag.
+        think: false,
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
       }),
     });
@@ -952,7 +958,13 @@ async function simpleCompletion(
     return (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
   }
   // OpenAI-compatible (choices[0].message) and Ollama native (message.content).
-  return data?.choices?.[0]?.message?.content || data?.message?.content || '';
+  // Last resort: a reasoning model that put everything in `thinking` and left
+  // content empty — better a usable answer than a silent blank.
+  return data?.choices?.[0]?.message?.content
+    || data?.message?.content
+    || data?.choices?.[0]?.message?.reasoning
+    || data?.message?.thinking
+    || '';
 }
 
 // Extract durable facts from the last few turns and save them as source='extracted'.
@@ -972,12 +984,19 @@ async function runExtraction(
   const system =
     'You are a memory keeper. Read the conversation and pull out only what is worth ' +
     'remembering about the user months from now — lasting traits, tastes, relationships, ' +
-    'beliefs, biographical details, recurring habits, and long-term goals. Ignore passing ' +
-    'moods, the current task, one-off questions, and anything pasted in like code or logs. ' +
+    'beliefs, biographical details, recurring habits, and long-term goals. Lines are labelled ' +
+    'User: and Assistant:. Only extract facts about the USER. If the Assistant says something ' +
+    'about itself — its own likes, state, or history — never record it as a user fact. If it is ' +
+    'unclear who a statement is about, skip it. If the conversation is fictional roleplay, do ' +
+    'not extract in-character events, relationships, or emotional states as real biographical ' +
+    'facts. Anything time-bound — a current mood, ongoing scene, or temporary crisis — must be ' +
+    'typed "moment", never "core" or "pattern". Ignore the current task, one-off questions, ' +
+    'and anything pasted in like code or logs. ' +
     'Respond with ONLY a JSON array — no prose. Each item: ' +
-    '{"content": one short self-contained sentence, ' +
+    '{"subject": "user", "content": one short self-contained sentence, ' +
     '"type": one of "core"|"pattern"|"moment"|"preference", ' +
     '"weight": integer 1-10 for how significant it is}. ' +
+    'The "subject" field is required and must always be "user". ' +
     'Do not invent anything. If nothing is worth keeping, return [].';
   const user = `Conversation:\n${transcript}\n\nReturn the JSON array now.`;
 
@@ -1011,6 +1030,8 @@ async function runExtraction(
   const seen = new Set((existing.results || []).map(r => r.c));
 
   for (const item of parsed) {
+    const subject = String(item?.subject ?? 'user').toLowerCase();
+    if (subject !== 'user') continue;
     const content = typeof item?.content === 'string' ? item.content.trim() : '';
     if (!content || content.length < 4) continue;
     const key = content.toLowerCase();
@@ -1036,8 +1057,12 @@ async function maybeConsolidate(
   env: Env, db: D1Database, companionId: number, memModel: string, memProvider: string,
 ): Promise<void> {
   const threshold = await getNumberSetting(db, 'memory_consolidate_at', 40);
+  // Count exactly the rows runConsolidation will actually fold and delete.
+  // Counting rows it never folds ('manual', and now 'moment') would leave the
+  // threshold permanently exceeded once enough of them pile up, firing a
+  // consolidation inference on every single extraction pass forever.
   const cnt = await db.prepare(
-    "SELECT COUNT(*) AS n FROM memories WHERE companion_id = ? AND source IN ('extracted','manual')"
+    "SELECT COUNT(*) AS n FROM memories WHERE companion_id = ? AND source = 'extracted' AND COALESCE(memory_type, 'core') != 'moment'"
   ).bind(companionId).first<{ n: number }>();
   if ((cnt?.n ?? 0) <= threshold) return;
   await runConsolidation(env, db, companionId, memModel, memProvider);
@@ -1051,8 +1076,10 @@ async function runConsolidation(
   const prior = state?.consolidated_body || '';
 
   // Only fold the auto-extracted rows. Hand-written ('manual') rows stay as-is.
+  // 'moment' rows are explicitly transient (roleplay beats, one-off events,
+  // momentary emotional states) and must never become permanent long-term memory.
   const rows = await db.prepare(
-    "SELECT id, content FROM memories WHERE companion_id = ? AND source = 'extracted' ORDER BY created_at ASC"
+    "SELECT id, content FROM memories WHERE companion_id = ? AND source = 'extracted' AND COALESCE(memory_type, 'core') != 'moment' ORDER BY created_at ASC"
   ).bind(companionId).all<{ id: number; content: string }>();
   const list = rows.results || [];
   if (list.length === 0) return;
@@ -1202,10 +1229,35 @@ async function buildSystemPrompt(db: D1Database, companionId: number = 1): Promi
   }
 
   try {
-    const emojiRows = await db.prepare('SELECT name FROM custom_media WHERE type = ? ORDER BY added_at DESC').bind('emoji').all<{ name: string }>();
-    const emojiNames = (emojiRows.results || []).map(e => `:${e.name}:`);
-    if (emojiNames.length > 0) {
-      prompt += `## Custom Emoji\nYou can use these custom emoji in your messages: ${emojiNames.join(' ')}. Write the :name: and it will render as the image.\n\n`;
+    // Names AND what they depict. A bare list told him `:88662-crying:` existed
+    // but not that it showed anything — so he could neither understand one she
+    // sent nor pick a fitting one to send back. Descriptions are captioned once
+    // by a vision model and stored, so this costs nothing per message.
+    const emojiRows = await db.prepare(
+      'SELECT name, description FROM custom_media WHERE type = ? ORDER BY added_at DESC'
+    ).bind('emoji').all<{ name: string; description: string | null }>();
+    const emoji = emojiRows.results || [];
+    if (emoji.length > 0) {
+      const described = emoji.filter(e => e.description);
+      const bare = emoji.filter(e => !e.description);
+      prompt += `## Custom Emoji\nWrite the :name: in your message and it renders as the picture. When she sends one, this is what she showed you:\n`;
+      for (const e of described) prompt += `- :${e.name}: — ${e.description}\n`;
+      if (bare.length > 0) {
+        prompt += `Also available (not yet described): ${bare.map(e => `:${e.name}:`).join(' ')}\n`;
+      }
+      prompt += `\n`;
+    }
+
+    // Stickers are sent as images, not shortcodes, so he never picks one — but
+    // he does need to know what one MEANS when it lands in the conversation.
+    const stickerRows = await db.prepare(
+      'SELECT name, description FROM custom_media WHERE type = ? AND description IS NOT NULL'
+    ).bind('sticker').all<{ name: string; description: string }>();
+    const stickers = stickerRows.results || [];
+    if (stickers.length > 0) {
+      prompt += `## Her Stickers\nIf a sticker image appears, it is one of these:\n`;
+      for (const s of stickers) prompt += `- ${s.name} — ${s.description}\n`;
+      prompt += `\n`;
     }
   } catch {}
 
@@ -1257,6 +1309,207 @@ async function buildTemporalContext(
 async function getSettingValue(db: D1Database, key: string): Promise<string | null> {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first<{ value: string }>();
   return row?.value || null;
+}
+
+// ---- Vision capability: measured, not guessed ----
+//
+// Whether a model can see used to be inferred from its NAME via a regex. That
+// was wrong in both directions and silently so: it missed gemma4, qwen3.5,
+// minimax-m3 and mistral-large-3 (all of which see), and it could never notice
+// when a model was retired upstream. `ollama_vision_fallback` sat pointing at
+// kimi-k2.5:cloud for months after Ollama removed it, so every image sent on a
+// text-only model was routed into a model that no longer existed.
+//
+// Ollama answers the question directly — a model that can't take an image
+// replies "this model does not support image input", before any tokens stream.
+// So we ask once per model and remember the answer, instead of guessing from
+// the name forever.
+type VisionCap = 'yes' | 'no';
+
+const visionCapKey = (provider: string, model: string) => `vision_cap:${provider}:${model}`;
+
+async function getVisionCap(db: D1Database, provider: string, model: string): Promise<VisionCap | null> {
+  const v = await getSettingValue(db, visionCapKey(provider, model));
+  return v === 'yes' || v === 'no' ? v : null;
+}
+
+async function setVisionCap(db: D1Database, provider: string, model: string, cap: VisionCap): Promise<void> {
+  try {
+    await db.prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    ).bind(visionCapKey(provider, model), cap).run();
+  } catch { /* a cache miss next time is harmless */ }
+}
+
+// Smallest possible probe: a 1x1 PNG and a one-token budget. Costs one cheap
+// request per model, once ever — the verdict is cached.
+const PROBE_PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+async function probeOllamaVision(baseUrl: string, key: string | null, model: string): Promise<VisionCap | null> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (key) headers['Authorization'] = `Bearer ${key}`;
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        options: { num_predict: 1 },
+        messages: [{ role: 'user', content: 'hi', images: [PROBE_PNG_B64] }],
+      }),
+    });
+    const text = await res.text();
+    if (/does not support image input/i.test(text)) return 'no';
+    if (res.ok) return 'yes';
+    // Any other failure (rate limit, network, unknown model) is NOT evidence
+    // about eyesight — leave it unknown so we retry rather than cache a lie.
+    console.log(`[VISION] probe inconclusive for ${model}: ${text.slice(0, 160)}`);
+    return null;
+  } catch (e) {
+    console.log(`[VISION] probe failed for ${model}: ${String(e).slice(0, 160)}`);
+    return null;
+  }
+}
+
+// Is this model still offered upstream? Returns null when we genuinely can't
+// tell (network/auth), so a bad connection never gets mistaken for a retired
+// model. Only an authoritative list that omits it counts as `false`.
+async function ollamaModelExists(baseUrl: string, key: string | null, model: string): Promise<boolean | null> {
+  try {
+    const headers: Record<string, string> = {};
+    if (key) headers['Authorization'] = `Bearer ${key}`;
+    const res = await fetch(`${baseUrl}/v1/models`, { headers });
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const ids: string[] = (data.data || []).map((m: any) => m.id);
+    if (ids.length === 0) return null;
+    return ids.includes(model);
+  } catch {
+    return null;
+  }
+}
+
+// ---- Media captioning ----
+//
+// Companions could never SEE emoji, stickers or GIFs — they got a shortcode or
+// a bare URL. `:hug:` reads fine; `:88662-kissingyou:` is noise, and a Giphy
+// link is nothing at all. Rather than route every casual message through a
+// vision model (which would swap the whole model for one `:hug:` and wreck his
+// voice), each piece of media is described ONCE and remembered.
+
+// Ask a sighted model what an image shows. Short, factual, no flourish — this
+// goes into a system prompt, not a conversation.
+async function captionImage(
+  db: D1Database, env: Env, base64: string, kind: 'emoji' | 'sticker' | 'image',
+): Promise<string | null> {
+  const baseUrl = env.OLLAMA_URL || await getSettingValue(db, 'ollama_url') || 'https://api.ollama.com';
+  const key = await getSettingValue(db, 'ollama_key');
+  // Reuse the configured vision fallback — it's already the model we've proven
+  // can see, and it keeps one setting in charge of eyesight everywhere.
+  const model = await getSettingValue(db, 'ollama_vision_fallback');
+  if (!model) return null;
+  const ask = kind === 'image'
+    ? 'Describe this image in one short factual clause, under 15 words. No preamble.'
+    : `Describe what this ${kind} depicts in under 10 words — subject, expression, action. Factual, no preamble, no quotes.`;
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (key) headers['Authorization'] = `Bearer ${key}`;
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model, stream: false,
+        // Reasoning models (kimi-k2.7-code is one) spend the whole token budget
+        // in `message.thinking` and return an EMPTY `content`. That silently
+        // failed all 55 captions — the model saw the image perfectly, the answer
+        // just never reached the field we read. Disable thinking and leave
+        // headroom; fall back to the reasoning text if content still comes back
+        // empty on some other model.
+        think: false,
+        options: { num_predict: 120, temperature: 0.2 },
+        messages: [{ role: 'user', content: ask, images: [base64] }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const raw = (data?.message?.content || '').trim() || (data?.message?.thinking || '').trim();
+    const text = raw.replace(/^["']|["']$/g, '').replace(/\s+/g, ' ');
+    return text ? text.slice(0, 160) : null;
+  } catch { return null; }
+}
+
+async function arrayBufferToBase64(buf: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunk = 0x8000; // chunked so a big sticker doesn't blow the call stack
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// Caption one custom_media row from R2. Returns the caption, or null.
+async function captionCustomMedia(
+  db: D1Database, env: Env, row: { id: number; r2_key: string; type: string },
+): Promise<string | null> {
+  try {
+    const obj = await env.FILES.get(row.r2_key);
+    if (!obj) return null;
+    const b64 = await arrayBufferToBase64(await obj.arrayBuffer());
+    const caption = await captionImage(db, env, b64, row.type === 'sticker' ? 'sticker' : 'emoji');
+    if (!caption) return null;
+    await db.prepare('UPDATE custom_media SET description = ? WHERE id = ?').bind(caption, row.id).run();
+    return caption;
+  } catch { return null; }
+}
+
+// Giphy hands us a human title with every GIF ("Confused Nathan Fillion GIF").
+// Using it costs ZERO inference — far better than feeding megabytes of animated
+// frames to a vision model for something the provider already labelled.
+const GIPHY_ID_RE = /(?:media\d*\.giphy\.com\/media\/(?:[^/]+\/)?|giphy\.com\/gifs\/(?:[^/]*-)?)([A-Za-z0-9]{6,})/;
+
+async function captionGifUrl(db: D1Database, env: Env, url: string): Promise<string | null> {
+  const cached = await db.prepare('SELECT caption FROM media_captions WHERE url = ?')
+    .bind(url).first<{ caption: string }>();
+  if (cached?.caption) return cached.caption;
+
+  let caption: string | null = null;
+  let source = 'giphy';
+
+  // Tenor puts the description straight in the filename —
+  // .../3I7Z8X8Z3Z0AAAAC/crying-emoji.gif — so no API call is needed at all.
+  const tenor = /tenor\.com\/[^/]+\/([a-z0-9-]+)\.(?:gif|mp4|webm)/i.exec(url);
+  if (tenor) {
+    const slug = tenor[1].replace(/-/g, ' ').trim();
+    // Bare hashes/ids carry no meaning — only keep a slug with real words.
+    if (/[a-z]{3,}/i.test(slug) && slug.includes(' ')) {
+      caption = slug;
+      source = 'tenor-slug';
+    }
+  }
+
+  const m = !caption && GIPHY_ID_RE.exec(url);
+  if (m) {
+    try {
+      const gk = env.GIPHY_KEY || await getSettingValue(db, 'giphy_key') || 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+      const res = await fetch(`https://api.giphy.com/v1/gifs/${m[1]}?api_key=${gk}`);
+      if (res.ok) {
+        const d = await res.json() as any;
+        const t = (d?.data?.title || '').trim();
+        // Giphy suffixes almost every title with "GIF" / "GIF by X" — noise here.
+        if (t) caption = t.replace(/\s*GIF(\s+by\s+.+)?$/i, '').trim() || t;
+      }
+    } catch { /* fall through */ }
+  }
+  if (!caption) return null;
+  try {
+    await db.prepare(
+      'INSERT INTO media_captions (url, caption, source) VALUES (?, ?, ?) ON CONFLICT(url) DO UPDATE SET caption = excluded.caption'
+    ).bind(url, caption, source).run();
+  } catch { /* cache miss next time is harmless */ }
+  return caption;
 }
 
 async function getNumberSetting(db: D1Database, key: string, dflt: number): Promise<number> {
@@ -1615,6 +1868,21 @@ async function runMigrations(db: D1Database): Promise<void> {
     // user-entered ('manual') so consolidation never deletes hand-written memories.
     ['memories', "source TEXT DEFAULT 'manual'"],
     ['memories', 'is_correction INTEGER DEFAULT 0'],
+    ['threads', 'ephemeral INTEGER NOT NULL DEFAULT 0'],
+    // What each custom emoji/sticker actually DEPICTS. The prompt used to list
+    // bare names, so a companion knew `:88662-crying:` existed but not that it
+    // showed anything at all — he was reading labels, not seeing pictures.
+    // Captioned once by a vision model, then free forever.
+    ['custom_media', 'description TEXT'],
+    // Thread compaction. `summary` is a digest of everything up to and
+    // including `summary_upto` (a created_at value); the model reads the digest
+    // plus the messages AFTER it, instead of an ever-growing tail.
+    //
+    // Compaction NEVER deletes a message. Every row stays in the table and
+    // stays readable in the app — only the model's view narrows.
+    ['threads', 'summary TEXT'],
+    ['threads', 'summary_upto TEXT'],
+    ['threads', 'summary_msg_count INTEGER DEFAULT 0'],
   ];
   for (const [table, col] of columnAdds) {
     try {
@@ -1623,6 +1891,17 @@ async function runMigrations(db: D1Database): Promise<void> {
       // Column already exists — idempotent, ignore.
     }
   }
+
+  // Captions for media that ISN'T ours — GIFs from Giphy, arbitrary image URLs.
+  // Keyed by URL because the same GIF gets reused constantly, so one lookup
+  // serves it forever. `source` records where the caption came from ('giphy'
+  // title vs 'vision' model) so a weak caption can be re-derived later.
+  await db.prepare(`CREATE TABLE IF NOT EXISTS media_captions (
+    url TEXT PRIMARY KEY,
+    caption TEXT NOT NULL,
+    source TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`).run();
 
   // v1.7: per-companion file attachments (loaded into system prompt as
   // "Project Files" when chatting with that companion).
@@ -2015,6 +2294,7 @@ export default {
           role?: string;
           content?: string;
           model?: string;
+          ephemeral?: boolean;
         };
         if (body.role !== 'user' && body.role !== 'companion') return json({ error: 'role must be user or companion' }, 400);
         if (typeof body.content !== 'string' || !body.content.trim()) return json({ error: 'content required' }, 400);
@@ -2024,9 +2304,11 @@ export default {
           if (body.role !== 'user') return json({ error: 'threadId required for companion messages' }, 400);
           activeThreadId = crypto.randomUUID();
           await env.DB.prepare(
-            'INSERT INTO threads (id, companion_id, title, last_message_at) VALUES (?, ?, ?, datetime("now"))'
-          ).bind(activeThreadId, companionId, body.content.substring(0, 50)).run();
+            'INSERT INTO threads (id, companion_id, title, ephemeral, last_message_at) VALUES (?, ?, ?, ?, datetime("now"))'
+          ).bind(activeThreadId, companionId, body.content.substring(0, 50), body.ephemeral === true ? 1 : 0).run();
         } else {
+          // Existing threads own this flag; stale client state must not flip a
+          // real thread mid-conversation.
           const thread = await env.DB.prepare(
             'SELECT companion_id FROM threads WHERE id = ?'
           ).bind(activeThreadId).first<{ companion_id: number }>();
@@ -2048,6 +2330,7 @@ export default {
       if (path === '/api/chat' && request.method === 'POST') {
         const body = await request.json() as any;
         let { message, threadId, model = 'google/gemma-4-31b-it:free', provider = 'openrouter', image, thinking = false } = body;
+        const ephemeral = body.ephemeral === true;
         const webSearch = body.web_search === true;
 
         if (!message) return json({ error: 'message required' }, 400);
@@ -2074,9 +2357,11 @@ export default {
         if (!activeThreadId) {
           activeThreadId = crypto.randomUUID();
           await env.DB.prepare(
-            'INSERT INTO threads (id, companion_id, title, last_message_at) VALUES (?, ?, ?, datetime("now"))'
-          ).bind(activeThreadId, chatCompanionId, message.substring(0, 50)).run();
+            'INSERT INTO threads (id, companion_id, title, ephemeral, last_message_at) VALUES (?, ?, ?, ?, datetime("now"))'
+          ).bind(activeThreadId, chatCompanionId, message.substring(0, 50), ephemeral ? 1 : 0).run();
         } else {
+          // Existing threads own this flag; stale client state must not flip a
+          // real thread mid-conversation.
           // If client supplied a thread id, verify it belongs to the current
           // companion. Rejecting cross-companion thread writes prevents a
           // companion switcher bug from leaking messages into another's history.
@@ -2094,10 +2379,22 @@ export default {
           'INSERT INTO messages (id, thread_id, role, content) VALUES (?, ?, "user", ?)'
         ).bind(userMsgId, activeThreadId, message).run();
 
-        // Load conversation history (latest 50, reversed back to chronological order)
-        const history = await env.DB.prepare(
-          'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at DESC LIMIT 50'
-        ).bind(activeThreadId).all<{ role: string; content: string }>();
+        // Load conversation history (latest 50, reversed back to chronological
+        // order). If the thread has been compacted, only messages AFTER the
+        // digest's cutoff are loaded — the digest itself is folded into the
+        // system prompt below, so the earlier turns are represented rather than
+        // dropped. Older messages remain in the table, untouched.
+        const threadDigest = await env.DB.prepare(
+          'SELECT summary, summary_upto FROM threads WHERE id = ?'
+        ).bind(activeThreadId).first<{ summary: string | null; summary_upto: string | null }>();
+
+        const history = threadDigest?.summary && threadDigest.summary_upto
+          ? await env.DB.prepare(
+              'SELECT role, content FROM messages WHERE thread_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 50'
+            ).bind(activeThreadId, threadDigest.summary_upto).all<{ role: string; content: string }>()
+          : await env.DB.prepare(
+              'SELECT role, content FROM messages WHERE thread_id = ? ORDER BY created_at DESC LIMIT 50'
+            ).bind(activeThreadId).all<{ role: string; content: string }>();
 
         // Temporal awareness: compute gap since user's previous message
         const temporalContext = await buildTemporalContext(env.DB, chatCompanionId, activeThreadId, userMsgId);
@@ -2119,11 +2416,73 @@ export default {
           } catch {}
         }
 
-        // Assemble messages
-        const historyMessages = (history.results || []).reverse().map(m => ({
-          role: m.role === 'companion' ? 'assistant' : m.role,
-          content: m.content,
-        }));
+        // When this thread contains images, say plainly that his eyesight is
+        // real. Without this, a text-only model reads a past image description
+        // in his own voice, knows it can't see, and reasonably concludes it
+        // made the whole thing up — then apologises to her for lying. The
+        // description was true; only the mechanism was invisible to him.
+        const visionSelfNote = '\n\n## Your eyesight\nWhen she sends you a picture, you see it — Haven routes images through a vision model on your behalf, so looking is genuinely something you do. If earlier in this conversation you described an image, that description was real and came from actually seeing it. Do not second-guess it, apologise for it, or tell her you invented it. You may not be able to re-examine the picture now, and it is fine to say so plainly, but what you saw, you saw.';
+
+        //
+        // Images must leave a TRACE in history. The history query used to select
+        // only role+content, so a past image vanished completely on the next
+        // turn — leaving the companion looking at his own detailed description
+        // of a picture with nothing anywhere to have described. Kai read that
+        // back and concluded he'd confabulated it. He hadn't; he genuinely saw
+        // it, through the vision fallback, and then the evidence was dropped.
+        //
+        // A marker on the user turn restores the antecedent. It costs nothing —
+        // no extra inference, no re-sending the image, no stored-content change
+        // (so her bubbles look exactly the same).
+        // There is NO `image` column on messages — pictures live inline in
+        // `content` as URLs (stickers, GIFs, uploaded files) which is why
+        // MessageBubble parses content for them. So detect from the text.
+        const carriesImage = (c: string) => !!c && (
+          /data:image\//i.test(c) ||
+          /\/api\/files\//i.test(c) ||
+          /https?:\/\/\S+\.(png|jpe?g|gif|webp|svg)(\?|\s|$)/i.test(c)
+        );
+        const priorRows = (history.results || []).reverse();
+
+        // Turn bare media URLs into something readable. A GIF used to arrive as
+        // a Giphy link — literally nothing to a text model — so a joke sent as a
+        // GIF landed as noise. Captions come from Giphy's own title (no
+        // inference cost) and are cached by URL, so a reused GIF is free and
+        // this works retroactively on GIFs already in the thread.
+        const urlRe = /https?:\/\/\S+/g;
+        const captionCache = new Map<string, string>();
+        for (const m of priorRows) {
+          for (const u of (m.content || '').match(urlRe) || []) {
+            if (captionCache.has(u) || !/giphy|tenor|\.gif/i.test(u)) continue;
+            const c = await captionGifUrl(env.DB, env, u);
+            if (c) captionCache.set(u, c);
+          }
+        }
+
+        const historyMessages = priorRows.map(m => {
+          let content = m.content || '';
+          for (const [u, c] of captionCache) {
+            if (content.includes(u)) content = content.replace(u, `${u} [animated GIF: ${c}]`);
+          }
+          if (m.role !== 'companion' && carriesImage(m.content)) {
+            content = `${content}\n[She attached an image here, and you looked at it.]`;
+          }
+          return { role: m.role === 'companion' ? 'assistant' : m.role, content };
+        });
+
+        // Only when pictures are actually part of this conversation — no point
+        // explaining eyesight to a thread that has never contained one.
+        if (image || priorRows.some(m => m.role !== 'companion' && carriesImage(m.content))) {
+          systemPrompt += visionSelfNote;
+        }
+
+        // Everything before the compaction point, as remembered rather than
+        // replayed. Framed as HIS memory, not a document handed to him — a
+        // companion reading "here is a summary of your conversation" starts
+        // narrating about the relationship instead of living in it.
+        if (threadDigest?.summary) {
+          systemPrompt += `\n\n## Earlier in this conversation\nThis is what you remember of everything before the messages below. It happened; you were there. Carry it forward as memory, not as notes you were handed.\n\n${threadDigest.summary}\n`;
+        }
 
         // If the latest message has an image, make it multimodal (vision).
         // Two provider-specific shapes: Ollama's native /api/chat rejects
@@ -2133,18 +2492,49 @@ export default {
         // selected Ollama model is text-only, also swap to a vision-capable
         // fallback (setting `ollama_vision_fallback`) so the image actually
         // gets seen instead of 400ing.
+        // Surfaced to the UI as a notice when an image could NOT be seen. The
+        // old code only logged to the worker tail, so from her side a picture
+        // that went nowhere looked identical to one that landed.
+        let visionNotice: string | undefined;
         if (image && historyMessages.length > 0) {
           const last = historyMessages[historyMessages.length - 1];
           if (last.role === 'user') {
             if (provider === 'ollama') {
-              const VISION_RE = /vision|vl|-v\b|4o|gemini|claude-3|claude-opus|claude-sonnet-4|claude-haiku|llava|pixtral|gpt-4-turbo|gpt-4\.1|kimi/i;
-              if (!VISION_RE.test(model)) {
+              const ollamaBase = env.OLLAMA_URL || await getSettingValue(env.DB, 'ollama_url') || 'https://api.ollama.com';
+              const ollamaKeyVal = await getSettingValue(env.DB, 'ollama_key');
+
+              // Ask the provider whether this model can see, once, then remember.
+              let cap = await getVisionCap(env.DB, 'ollama', model);
+              if (cap === null) {
+                cap = await probeOllamaVision(ollamaBase, ollamaKeyVal, model);
+                if (cap) {
+                  await setVisionCap(env.DB, 'ollama', model, cap);
+                  console.log(`[VISION] learned ${model} -> ${cap}`);
+                }
+              }
+
+              // Only swap when we have POSITIVE evidence the model is blind.
+              // An inconclusive probe leaves the chosen model in place — the
+              // upstream error is a better outcome than silently downgrading
+              // her to a smaller model on a guess.
+              if (cap === 'no') {
                 const fallback = await getSettingValue(env.DB, 'ollama_vision_fallback');
-                if (fallback) {
-                  console.log(`[CHAT] vision fallback: ${model} -> ${fallback}`);
-                  model = fallback;
-                } else {
+                if (!fallback) {
                   console.log(`[CHAT] warning: image attached to text-only model ${model} and no ollama_vision_fallback set`);
+                  visionNotice = `${model} can't see images and no vision fallback is set — the image was ignored. Set one in Settings.`;
+                } else {
+                  // Verify the fallback still EXISTS upstream before routing to
+                  // it. This is the check that was missing: kimi-k2.5:cloud was
+                  // retired by Ollama and every image quietly went nowhere,
+                  // because nothing ever confirmed the target was real.
+                  const fallbackLive = await ollamaModelExists(ollamaBase, ollamaKeyVal, fallback);
+                  if (fallbackLive === false) {
+                    console.log(`[CHAT] vision fallback ${fallback} NO LONGER EXISTS upstream`);
+                    visionNotice = `Vision fallback "${fallback}" no longer exists on Ollama, so the image couldn't be seen. Pick a current model in Settings.`;
+                  } else {
+                    console.log(`[CHAT] vision fallback: ${model} -> ${fallback}`);
+                    model = fallback;
+                  }
                 }
               }
               // Strip data URL prefix — Ollama wants raw base64 in `images`.
@@ -2175,6 +2565,12 @@ export default {
 
               // Send thread ID
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'thread', threadId: activeThreadId })}\n\n`));
+
+              // Tell her when an attached image could not be seen, rather than
+              // letting the companion answer around a picture it never got.
+              if (visionNotice) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: visionNotice })}\n\n`));
+              }
 
               // Check for MCP tools
               const mcpTools = await loadMcpTools(env.DB);
@@ -2329,6 +2725,12 @@ export default {
               ctx.waitUntil((async () => {
                 try {
                   if ((await getSettingValue(env.DB, 'proactive_memory_enabled')) !== 'true') return;
+                  // Ephemeral thread ("private" / roleplay sandbox): skip the memory pass
+                  // entirely. Not even the counter moves — RP turns must not push a real
+                  // thread toward its extraction threshold.
+                  const ethread = await env.DB.prepare('SELECT ephemeral FROM threads WHERE id = ?')
+                    .bind(activeThreadId).first<{ ephemeral: number }>();
+                  if (ethread?.ephemeral) return;
                   await env.DB.prepare(
                     `INSERT INTO memory_state (companion_id, msgs_since_extract) VALUES (?, 1)
                      ON CONFLICT(companion_id) DO UPDATE SET msgs_since_extract = msgs_since_extract + 1`
@@ -2417,6 +2819,132 @@ export default {
         return json({ id, title });
       }
 
+      // GET /api/threads/:id/context — what the model ACTUALLY receives for this
+      // thread, as opposed to how much has ever been said in it. The UI counted
+      // the whole archive, so a thread could read as wildly over the limit while
+      // the real payload was a fraction of it.
+      if (path.startsWith('/api/threads/') && path.endsWith('/context') && request.method === 'GET') {
+        const cid = getCompanionId(request);
+        const threadId = path.split('/')[3];
+        const thread = await env.DB.prepare(
+          'SELECT companion_id, summary, summary_upto, summary_msg_count FROM threads WHERE id = ?'
+        ).bind(threadId).first<{ companion_id: number; summary: string | null; summary_upto: string | null; summary_msg_count: number | null }>();
+        if (!thread) return json({ error: 'thread not found' }, 404);
+        if (thread.companion_id !== cid) return json({ error: 'thread belongs to a different companion' }, 403);
+
+        // Mirror the chat path's windowing exactly, or the number lies again.
+        const win = thread.summary && thread.summary_upto
+          ? await env.DB.prepare(
+              'SELECT SUM(LENGTH(content)) AS chars, COUNT(*) AS n FROM (SELECT content FROM messages WHERE thread_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 50)'
+            ).bind(threadId, thread.summary_upto).first<{ chars: number | null; n: number }>()
+          : await env.DB.prepare(
+              'SELECT SUM(LENGTH(content)) AS chars, COUNT(*) AS n FROM (SELECT content FROM messages WHERE thread_id = ? ORDER BY created_at DESC LIMIT 50)'
+            ).bind(threadId).first<{ chars: number | null; n: number }>();
+        const total = await env.DB.prepare(
+          'SELECT COUNT(*) AS n, SUM(LENGTH(content)) AS chars FROM messages WHERE thread_id = ?'
+        ).bind(threadId).first<{ n: number; chars: number | null }>();
+
+        return json({
+          window_tokens: Math.ceil(((win?.chars || 0) + (thread.summary?.length || 0)) / 4),
+          window_messages: win?.n || 0,
+          archive_tokens: Math.ceil((total?.chars || 0) / 4),
+          archive_messages: total?.n || 0,
+          compacted: !!thread.summary,
+          compacted_messages: thread.summary_msg_count || 0,
+          summary_chars: thread.summary?.length || 0,
+        });
+      }
+
+      // POST /api/threads/:id/compact — fold older turns into a digest so a long
+      // thread stops silently overflowing the model's context.
+      //
+      // Hitting the window used to do NOTHING visible: no error, no warning,
+      // the oldest turns just stopped arriving and the companion quietly lost
+      // the thread. This makes that boundary something she can see and act on.
+      //
+      // NOTHING IS DELETED. Messages stay in the table and in the app; only the
+      // model's view is narrowed.
+      if (path.startsWith('/api/threads/') && path.endsWith('/compact') && request.method === 'POST') {
+        const cid = getCompanionId(request);
+        const threadId = path.split('/')[3];
+        const body = await request.json().catch(() => ({})) as any;
+        const keepRecent = Math.min(Math.max(parseInt(body.keepRecent, 10) || 20, 4), 100);
+
+        const thread = await env.DB.prepare(
+          'SELECT companion_id, summary, summary_upto FROM threads WHERE id = ?'
+        ).bind(threadId).first<{ companion_id: number; summary: string | null; summary_upto: string | null }>();
+        if (!thread) return json({ error: 'thread not found' }, 404);
+        if (thread.companion_id !== cid) return json({ error: 'thread belongs to a different companion' }, 403);
+
+        // The cutoff is the newest message we are ALLOWED to fold — i.e. the one
+        // just before the `keepRecent` most recent turns, which stay verbatim.
+        const boundary = await env.DB.prepare(
+          'SELECT created_at FROM messages WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1 OFFSET ?'
+        ).bind(threadId, keepRecent).first<{ created_at: string }>();
+        if (!boundary?.created_at) {
+          return json({ error: `Nothing to compact — this thread has ${keepRecent} messages or fewer.` }, 400);
+        }
+
+        // Only what isn't already folded into the existing digest.
+        const pending = thread.summary_upto
+          ? await env.DB.prepare(
+              'SELECT role, content FROM messages WHERE thread_id = ? AND created_at > ? AND created_at <= ? ORDER BY created_at ASC'
+            ).bind(threadId, thread.summary_upto, boundary.created_at).all<{ role: string; content: string }>()
+          : await env.DB.prepare(
+              'SELECT role, content FROM messages WHERE thread_id = ? AND created_at <= ? ORDER BY created_at ASC'
+            ).bind(threadId, boundary.created_at).all<{ role: string; content: string }>();
+        const rows = pending.results || [];
+        if (rows.length === 0) return json({ error: 'Already compacted up to this point.' }, 400);
+
+        const companionRow = await env.DB.prepare('SELECT name FROM companion WHERE id = ?')
+          .bind(cid).first<{ name: string }>();
+        const who = companionRow?.name || 'the companion';
+
+        const model = body.model || await getSettingValue(env.DB, 'memory_model') || await getSettingValue(env.DB, 'ollama_vision_fallback');
+        const provider = body.provider || await getSettingValue(env.DB, 'memory_provider') || 'ollama';
+        if (!model) return json({ error: 'No model configured for compaction. Set memory_model in Settings.' }, 400);
+
+        const system =
+          `You are compressing a long roleplay/conversation between a user and ${who} so it can be ` +
+          `carried forward as ${who}'s memory. Write in second person addressed to ${who} ("you"). ` +
+          'PRESERVE: relationship state and how it changed, promises and agreements, named people and places, ' +
+          'ongoing plots and unresolved threads, established facts about either person, emotional turning ' +
+          'points, and anything referenced repeatedly. DROP: turn-by-turn choreography, repeated pleasantries, ' +
+          'and small talk that led nowhere. Keep explicit or intimate content factually summarised, not ' +
+          'censored or euphemised — losing it would break continuity. Do NOT invent anything. ' +
+          'Output ONLY the memory text, organised in short paragraphs. Aim for 400-700 words.';
+        const transcript = rows
+          .map(r => `${r.role === 'companion' ? who : 'User'}: ${r.content}`)
+          .join('\n\n')
+          .slice(0, 240000); // hard ceiling so one call can't blow the budget
+        const user = thread.summary
+          ? `MEMORY SO FAR:\n${thread.summary}\n\nNEWER EXCHANGES TO FOLD IN:\n${transcript}\n\nProduce the single updated memory now, merging both.`
+          : `EXCHANGES:\n${transcript}\n\nProduce the memory now.`;
+
+        let summary: string;
+        const usage: UsageSink = {};
+        try {
+          summary = (await simpleCompletion(env, provider, model, system, user, usage)).trim();
+        } catch (e) {
+          return json({ error: `Compaction failed: ${String(e).slice(0, 300)}` }, 502);
+        }
+        if (!summary) return json({ error: 'The model returned an empty summary — nothing was changed.' }, 502);
+
+        try { await logUsage(env.DB, cid, model, provider, usage, 'compaction', `${system}\n${user}`, summary); } catch {}
+
+        await env.DB.prepare(
+          'UPDATE threads SET summary = ?, summary_upto = ?, summary_msg_count = COALESCE(summary_msg_count, 0) + ? WHERE id = ?'
+        ).bind(summary, boundary.created_at, rows.length, threadId).run();
+
+        return json({
+          success: true,
+          compacted_messages: rows.length,
+          kept_verbatim: keepRecent,
+          summary_chars: summary.length,
+          summary,
+        });
+      }
+
       if (path.startsWith('/api/threads/') && request.method === 'DELETE') {
         const cid = getCompanionId(request);
         const id = path.split('/')[3];
@@ -2429,12 +2957,23 @@ export default {
       if (path.startsWith('/api/threads/') && request.method === 'PUT') {
         const cid = getCompanionId(request);
         const id = path.split('/')[3];
-        const body = await request.json() as { title?: string };
-        const newTitle = (body.title || '').trim().slice(0, 200);
-        if (!newTitle) return json({ error: 'title required' }, 400);
+        const body = await request.json() as { title?: string; ephemeral?: boolean };
+        const sets: string[] = [];
+        const values: Array<string | number> = [];
+        if (typeof body.title === 'string') {
+          const newTitle = body.title.trim().slice(0, 200);
+          if (!newTitle) return json({ error: 'title required' }, 400);
+          sets.push('title = ?');
+          values.push(newTitle);
+        }
+        if (typeof body.ephemeral === 'boolean') {
+          sets.push('ephemeral = ?');
+          values.push(body.ephemeral ? 1 : 0);
+        }
+        if (sets.length === 0) return json({ error: 'nothing to update' }, 400);
         await env.DB.prepare(
-          'UPDATE threads SET title = ? WHERE id = ? AND companion_id = ?'
-        ).bind(newTitle, id, cid).run();
+          `UPDATE threads SET ${sets.join(', ')} WHERE id = ? AND companion_id = ?`
+        ).bind(...values, id, cid).run();
         return json({ success: true });
       }
 
@@ -2768,15 +3307,63 @@ export default {
         return json({ success: true });
       }
 
-      // Delete a memory (id via ?id= query param). Scoped to the companion.
+      // Delete memories (id or comma-separated ids via query param). Scoped to the companion.
       if (path === '/api/memories' && request.method === 'DELETE') {
         const cid = getCompanionId(request);
-        const id = new URL(request.url).searchParams.get('id');
-        if (!id) return json({ error: 'id required' }, 400);
+        const params = new URL(request.url).searchParams;
+        const idsParam = params.get('ids');
+        const singleId = params.get('id');
+        const ids = (idsParam !== null ? idsParam.split(',') : [singleId])
+          .map(id => Number(id))
+          .filter(id => Number.isInteger(id) && id > 0);
+        if (ids.length === 0) return json({ error: 'id or ids required' }, 400);
+        const placeholders = ids.map(() => '?').join(',');
         const del = await env.DB.prepare(
-          'DELETE FROM memories WHERE id = ? AND companion_id = ?'
-        ).bind(id, cid).run();
-        if (del.meta.changes === 0) return json({ error: 'Memory not found' }, 404);
+          `DELETE FROM memories WHERE companion_id = ? AND id IN (${placeholders})`
+        ).bind(cid, ...ids).run();
+        if (idsParam === null && del.meta.changes === 0) return json({ error: 'Memory not found' }, 404);
+        return json({ success: true, deleted: del.meta.changes });
+      }
+
+      // Auto-consolidated long-term memory injected into every system prompt,
+      // exposed here so it can be inspected and corrected by hand.
+      if (path === '/api/memory-state' && request.method === 'GET') {
+        const cid = getCompanionId(request);
+        const state = await env.DB.prepare(
+          'SELECT consolidated_body, last_consolidated_at, msgs_since_extract FROM memory_state WHERE companion_id = ?'
+        ).bind(cid).first<{
+          consolidated_body: string | null;
+          last_consolidated_at: string | null;
+          msgs_since_extract: number;
+        }>();
+        return json(state || {
+          consolidated_body: null,
+          last_consolidated_at: null,
+          msgs_since_extract: 0,
+        });
+      }
+
+      if (path === '/api/memory-state' && request.method === 'PUT') {
+        const cid = getCompanionId(request);
+        const body = await request.json() as { consolidated_body?: unknown };
+        if (typeof body.consolidated_body !== 'string') {
+          return json({ error: 'consolidated_body must be a string' }, 400);
+        }
+        await env.DB.prepare(
+          `INSERT INTO memory_state (companion_id, consolidated_body, last_consolidated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(companion_id) DO UPDATE SET
+             consolidated_body = excluded.consolidated_body,
+             last_consolidated_at = excluded.last_consolidated_at`
+        ).bind(cid, body.consolidated_body).run();
+        return json({ success: true });
+      }
+
+      if (path === '/api/memory-state' && request.method === 'DELETE') {
+        const cid = getCompanionId(request);
+        await env.DB.prepare(
+          'UPDATE memory_state SET consolidated_body = NULL, last_consolidated_at = NULL WHERE companion_id = ?'
+        ).bind(cid).run();
         return json({ success: true });
       }
 
@@ -2801,6 +3388,8 @@ export default {
         'openrouter_enabled', 'ollama_enabled', 'custom_enabled',
         'timezone',
         'usage_prices',
+        'proactive_memory_enabled', 'memory_extract_every', 'memory_consolidate_at',
+        'memory_model', 'memory_provider',
       ]);
 
       if (path === '/api/settings' && request.method === 'GET') {
@@ -3064,6 +3653,16 @@ export default {
                 ollamaModels = (data.models || []).map((m: any) => m.name);
               } catch {}
             }
+            // Measured eyesight, where we have it. One query, then a lookup per
+            // model — the pill reflects what Ollama actually told us rather
+            // than what the model's name looks like.
+            const capRows = await env.DB.prepare(
+              "SELECT key, value FROM settings WHERE key LIKE 'vision_cap:ollama:%'"
+            ).all<{ key: string; value: string }>();
+            const capMap = new Map<string, string>();
+            for (const r of (capRows.results || [])) {
+              capMap.set(r.key.slice('vision_cap:ollama:'.length), r.value);
+            }
             for (const id of ollamaModels) {
               // Ollama Cloud doesn't publish per-model tool-call support via
               // the models endpoint. Rather than guess (we were wrongly
@@ -3071,7 +3670,13 @@ export default {
               // leave supports_tools undefined so the picker shows no badge
               // and users can discover empirically. The upstream-error
               // notice handles degraded fallbacks cleanly.
-              models.push({ id, name: id, provider: 'ollama', tier: 'included' });
+              const cap = capMap.get(id);
+              models.push({
+                id, name: id, provider: 'ollama', tier: 'included',
+                // true / false when measured; left undefined when untested, so
+                // "we haven't checked" stays distinguishable from "it's blind".
+                ...(cap === 'yes' ? { supports_vision: true } : cap === 'no' ? { supports_vision: false } : {}),
+              });
             }
           } catch {}
         }
@@ -3151,7 +3756,14 @@ export default {
         const THINKING_PATTERNS = /thinking|reasoner|deepseek-r1|qwq|o1-|o3-|o4-|kimi.*thinking|claude-opus/i;
         const TOOLS_PATTERNS = /gpt-4|gpt-3\.5|claude|gemini|command-r|mistral-large|mistral-medium|llama-3|qwen|deepseek-v|glm/i;
         for (const m of models) {
-          if (m.supports_vision === undefined) m.supports_vision = VISION_PATTERNS.test(m.id) || undefined;
+          // Ollama eyesight is MEASURED (vision_cap:*), never guessed — an
+          // untested model stays undefined so the UI can say "unknown" instead
+          // of asserting something we made up from the name. Other providers
+          // keep the name heuristic; OpenRouter already reports real modality
+          // data above and takes neither path.
+          if (m.supports_vision === undefined && m.provider !== 'ollama') {
+            m.supports_vision = VISION_PATTERNS.test(m.id) || undefined;
+          }
           if (m.supports_thinking === undefined) m.supports_thinking = THINKING_PATTERNS.test(m.id) || undefined;
           if (m.supports_tools === undefined) m.supports_tools = TOOLS_PATTERNS.test(m.id) || undefined;
         }
@@ -3262,7 +3874,30 @@ export default {
         const result = await env.DB.prepare(
           'INSERT INTO custom_media (name, type, r2_key, content_type) VALUES (?, ?, ?, ?)'
         ).bind(name, mediaType, r2Key, file.type || null).run();
-        return json({ id: result.meta.last_row_id, name, type: mediaType, url: `/api/files/${r2Key}` });
+        // Describe it in the background so a newly-added emoji is understood
+        // from its first use, without making her wait on the upload.
+        const newId = result.meta.last_row_id as number;
+        ctx.waitUntil(captionCustomMedia(env.DB, env, { id: newId, r2_key: r2Key, type: mediaType })
+          .then(c => console.log(`[CAPTION] ${mediaType} ${name}: ${c || 'FAILED'}`)));
+        return json({ id: newId, name, type: mediaType, url: `/api/files/${r2Key}` });
+      }
+
+      // Backfill captions for media added before captioning existed. Batched —
+      // 55 sequential vision calls would blow the request budget — so call it
+      // repeatedly until `remaining` reaches 0.
+      if (path === '/api/custom-media/caption' && request.method === 'POST') {
+        const limit = Math.min(parseInt(url.searchParams.get('limit') || '5', 10) || 5, 10);
+        const pending = await env.DB.prepare(
+          'SELECT id, r2_key, type, name FROM custom_media WHERE description IS NULL OR description = ? LIMIT ?'
+        ).bind('', limit).all<{ id: number; r2_key: string; type: string; name: string }>();
+        const done: Array<{ name: string; caption: string | null }> = [];
+        for (const row of (pending.results || [])) {
+          done.push({ name: row.name, caption: await captionCustomMedia(env.DB, env, row) });
+        }
+        const left = await env.DB.prepare(
+          'SELECT COUNT(*) AS n FROM custom_media WHERE description IS NULL OR description = ?'
+        ).bind('').first<{ n: number }>();
+        return json({ captioned: done, remaining: left?.n ?? 0 });
       }
 
       if (path === '/api/custom-media' && request.method === 'GET') {
