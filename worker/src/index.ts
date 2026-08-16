@@ -509,7 +509,10 @@ async function executeNativeTool(
     // Uses Giphy's public beta key — rate-limited but free and already
     // embedded in the frontend GifPicker. Same key across Haven so behavior
     // is consistent between user-picked GIFs and companion-sent ones.
-    const giphyKey = (await getSettingValue(db, 'giphy_key')) || 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+    // No hardcoded fallback — a key in source is public with the repo, and a
+    // fallback hides a missing setting until that key dies.
+    const giphyKey = await getSettingValue(db, 'giphy_key');
+    if (!giphyKey) return 'send_gif error: no GIPHY key configured (set giphy_key in Settings)';
     const url = `https://api.giphy.com/v1/gifs/search?api_key=${giphyKey}&q=${encodeURIComponent(query)}&limit=1&rating=${rating}`;
     try {
       const resp = await fetch(url);
@@ -1493,7 +1496,8 @@ async function captionGifUrl(db: D1Database, env: Env, url: string): Promise<str
   const m = !caption && GIPHY_ID_RE.exec(url);
   if (m) {
     try {
-      const gk = env.GIPHY_KEY || await getSettingValue(db, 'giphy_key') || 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+      const gk = env.GIPHY_KEY || await getSettingValue(db, 'giphy_key');
+      if (!gk) return null; // no key -> no caption, rather than a borrowed quota
       const res = await fetch(`https://api.giphy.com/v1/gifs/${m[1]}?api_key=${gk}`);
       if (res.ok) {
         const d = await res.json() as any;

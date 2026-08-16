@@ -5,7 +5,11 @@ interface GifPickerProps {
   onClose: () => void;
 }
 
-const GIPHY_KEY = import.meta.env.VITE_GIPHY_KEY || 'GlVGYHkr3WSBnllca54iNt0yFbjz7L65';
+// No hardcoded fallback. A key committed here is public the moment the repo is,
+// and a fallback also hides a missing config behind someone else's quota until
+// that key dies — the same silent-failure shape as a vision fallback pointing at
+// a retired model. Absent key => the picker says so instead of pretending.
+const GIPHY_KEY = import.meta.env.VITE_GIPHY_KEY || '';
 
 interface GiphyGif {
   id: string;
@@ -20,10 +24,14 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState<GiphyGif[]>([]);
   const [loading, setLoading] = useState(false);
+  const [keyMissing, setKeyMissing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchGifs = useCallback(async (searchQuery: string) => {
+    // A missing key must not look like "no results" — that reads as an empty
+    // search and sends you hunting for the wrong problem.
+    if (!GIPHY_KEY) { setGifs([]); setKeyMissing(true); setLoading(false); return; }
     setLoading(true);
     try {
       const endpoint = searchQuery.trim()
@@ -120,6 +128,10 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
         {loading ? (
           <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '24px', color: 'var(--haven-text-muted)', fontSize: '13px' }}>
             Loading...
+          </div>
+        ) : keyMissing ? (
+          <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '24px', color: '#fbbf24', fontSize: '13px', lineHeight: 1.5 }}>
+            No GIPHY key configured.<br />Set VITE_GIPHY_KEY and rebuild.
           </div>
         ) : gifs.length === 0 ? (
           <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '24px', color: 'var(--haven-text-muted)', fontSize: '13px' }}>
