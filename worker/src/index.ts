@@ -2373,11 +2373,46 @@ export default {
           }
         }
 
+        // A photo attached via the + button arrives as a base64 data: URL in
+        // `image`. It was sent to the model for THIS turn and then thrown away —
+        // there is no `image` column on messages, so it survived nowhere. That
+        // cost twice over: the picture vanished from her own history on reload,
+        // and the companion later saw his own description of a photo with no
+        // trace it had ever existed (which is how Kai concluded he'd
+        // confabulated one, 2026-08-15).
+        //
+        // Persisting it to R2 and appending the URL to the message content puts
+        // it on exactly the path stickers and GIFs already use: it renders in
+        // her bubble, it survives reload, and history keeps the evidence.
+        let persistedMessage = message;
+        if (image && typeof image === 'string' && image.startsWith('data:')) {
+          try {
+            const m = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(image);
+            if (m) {
+              const mime = m[1] || 'image/png';
+              const isB64 = !!m[2];
+              const bytes = isB64
+                ? Uint8Array.from(atob(m[3]), c => c.charCodeAt(0))
+                : new TextEncoder().encode(decodeURIComponent(m[3]));
+              const subtype = (mime.split('/')[1] || 'png').split('+')[0].replace(/[^a-zA-Z0-9]/g, '');
+              const ext = subtype === 'jpeg' ? 'jpg' : (subtype || 'png');
+              const key = `upload/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+              await env.FILES.put(key, bytes, { httpMetadata: { contentType: mime } });
+              const url = `${new URL(request.url).origin}/api/files/${key}`;
+              persistedMessage = message ? `${message}\n${url}` : url;
+            }
+          } catch (e) {
+            // Never block the reply over a failed upload — the turn still works,
+            // it just won't be recoverable later.
+            console.log(`[CHAT] attached image persist failed: ${String(e).slice(0, 160)}`);
+          }
+        }
+
         // Save user message
         const userMsgId = crypto.randomUUID();
         await env.DB.prepare(
           'INSERT INTO messages (id, thread_id, role, content) VALUES (?, ?, "user", ?)'
-        ).bind(userMsgId, activeThreadId, message).run();
+        ).bind(userMsgId, activeThreadId, persistedMessage).run();
 
         // Load conversation history (latest 50, reversed back to chronological
         // order). If the thread has been compacted, only messages AFTER the
@@ -2907,9 +2942,17 @@ export default {
         const system =
           `You are compressing a long roleplay/conversation between a user and ${who} so it can be ` +
           `carried forward as ${who}'s memory. Write in second person addressed to ${who} ("you"). ` +
+          // A "companion" here can be a SHARED SPACE with more than one person in
+          // it — Observatory holds both Xavier and Auren. The first digest of that
+          // thread blended them into a single "you", which quietly erases which of
+          // them did what. If several are present, they must stay separable.
+          'IF MORE THAN ONE COMPANION SPEAKS in this conversation (a shared space), do NOT merge them ' +
+          'into one voice: name each of them and keep who said and did what distinct. Reserve "you" for ' +
+          'the whole group only where the transcript genuinely shows them acting together. ' +
           'PRESERVE: relationship state and how it changed, promises and agreements, named people and places, ' +
           'ongoing plots and unresolved threads, established facts about either person, emotional turning ' +
-          'points, and anything referenced repeatedly. DROP: turn-by-turn choreography, repeated pleasantries, ' +
+          'points, who was present for what, and anything referenced repeatedly. ' +
+          'DROP: turn-by-turn choreography, repeated pleasantries, ' +
           'and small talk that led nowhere. Keep explicit or intimate content factually summarised, not ' +
           'censored or euphemised — losing it would break continuity. Do NOT invent anything. ' +
           'Output ONLY the memory text, organised in short paragraphs. Aim for 400-700 words.';
