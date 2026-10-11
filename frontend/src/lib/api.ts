@@ -126,6 +126,14 @@ async function del(path: string): Promise<void> {
 // Threads
 export const getThreads = () => get<Thread[]>('/api/threads');
 export const createThread = (title?: string) => post<{ id: string }>('/api/threads', { title });
+export const branchThread = (threadId: string, messageId: string) =>
+  post<{
+    id: string;
+    title: string;
+    ephemeral: number;
+    copied_messages: number;
+    branched_from_message_id: string;
+  }>(`/api/threads/${threadId}/branch`, { messageId });
 export const deleteThread = (id: string) => del(`/api/threads/${id}`);
 export const renameThread = (id: string, title: string) => put<{ success: boolean }>(`/api/threads/${id}`, { title });
 // "Private" thread — the worker skips the whole proactive-memory pass for it,
@@ -397,6 +405,26 @@ export async function uploadFile(file: File): Promise<{ key: string; url: string
     throw new Error(`Upload failed (${res.status}): ${msg.slice(0, 120)}`);
   }
   return res.json();
+}
+
+export const getSttStatus = () => get<{ attune: boolean }>('/api/stt/status');
+
+export async function transcribeAudio(file: File): Promise<{
+  transcript: string;
+  stt_skipped?: boolean;
+  stt_partial?: boolean;
+}> {
+  const form = new FormData();
+  form.append('audio', file);
+  form.append('language', 'en');
+  const res = await fetch(`${apiBase()}/api/stt`, {
+    method: 'POST',
+    headers: scopedHeaders(),
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Transcription failed (${res.status})`);
+  return data;
 }
 
 // Export

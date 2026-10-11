@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import GifPicker from './GifPicker';
 import StickerPicker from './StickerPicker';
-import { uploadFile, apiBase } from '../lib/api';
+import { uploadFile, getSttStatus, transcribeAudio, apiBase } from '../lib/api';
 import { extractFileText, isExtractableFile, type ExtractedFile } from '../lib/file-extract';
 
 interface ChatInputProps {
@@ -16,6 +16,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
   const [showStickers, setShowStickers] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -68,6 +69,9 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     }
   };
   const recognitionRef = useRef<any | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSend = () => {
@@ -135,17 +139,10 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     inputRef.current?.focus();
   };
 
-  // Speech-to-text
-  const toggleSTT = () => {
-    if (listening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setListening(false);
-      return;
-    }
-
+  const startBrowserSTT = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('Speech recognition is not supported in this browser.');
+      alert('Speech recognition is not supported in this browser. Connect Attune in Settings > MCP Servers to add self-hosted speech-to-text.');
       return;
     }
 
@@ -153,36 +150,102 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = 'en-US';
-
     recognition.onresult = (event: any) => {
       let transcript = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          transcript += event.results[i][0].transcript;
-        }
+        if (event.results[i].isFinal) transcript += event.results[i][0].transcript;
       }
-      if (transcript) {
-        setText((prev) => (prev ? prev + ' ' : '') + transcript);
-      }
+      if (transcript) setText((prev) => (prev ? `${prev} ${transcript}` : transcript));
     };
-
-    recognition.onerror = () => {
-      setListening(false);
-    };
-
-    recognition.onend = () => {
-      setListening(false);
-    };
-
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
     recognitionRef.current = recognition;
     recognition.start();
     setListening(true);
+  };
+
+  const startAttuneSTT = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      alert('Audio recording is not supported on this device.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+      const preferred = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm']
+        .find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = preferred
+        ? new MediaRecorder(stream, { mimeType: preferred })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = event => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        setListening(false);
+        stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
+        const mime = recorder.mimeType || preferred || 'audio/webm';
+        const extension = mime.includes('mp4') ? 'm4a' : 'webm';
+        const blob = new Blob(audioChunksRef.current, { type: mime });
+        audioChunksRef.current = [];
+        if (!blob.size) return;
+        setTranscribing(true);
+        try {
+          const result = await transcribeAudio(
+            new File([blob], `haven-voice-${Date.now()}.${extension}`, { type: mime }),
+          );
+          const transcript = result.transcript.trim();
+          if (transcript) setText(prev => (prev ? `${prev} ${transcript}` : transcript));
+          else alert(result.stt_skipped ? 'No speech was detected.' : 'Attune returned no transcript.');
+        } catch (error) {
+          alert(error instanceof Error ? error.message : 'Transcription failed.');
+        } finally {
+          setTranscribing(false);
+          inputRef.current?.focus();
+        }
+      };
+      recorder.start(250);
+      setListening(true);
+    } catch {
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+      alert('Microphone permission is required to use Attune transcription.');
+    }
+  };
+
+  // Speech-to-text: connected Attune first, browser recognition otherwise.
+  const toggleSTT = async () => {
+    if (listening && recorderRef.current) {
+      recorderRef.current.stop();
+      return;
+    }
+    if (listening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setListening(false);
+      return;
+    }
+    if (transcribing) return;
+    try {
+      const status = await getSttStatus();
+      if (status.attune) await startAttuneSTT();
+      else startBrowserSTT();
+    } catch {
+      startBrowserSTT();
+    }
   };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (recognitionRef.current) recognitionRef.current.stop();
+      if (recorderRef.current?.state === 'recording') {
+        recorderRef.current.onstop = null;
+        recorderRef.current.stop();
+      }
+      streamRef.current?.getTracks().forEach(track => track.stop());
     };
   }, []);
 
@@ -344,7 +407,7 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
         />
 
         {/* Mic / Send button */}
-        {text.trim() ? (
+        {text.trim() && !listening ? (
           <button
             onClick={handleSend}
             disabled={disabled}
@@ -364,13 +427,14 @@ export default function ChatInput({ onSend, disabled, placeholder = 'Type a mess
         ) : (
           <button
             onClick={toggleSTT}
+            disabled={disabled || transcribing}
             style={{
               width: '36px', height: '36px', borderRadius: '50%',
               background: listening ? 'var(--haven-accent)' : 'var(--haven-border)',
               border: 'none', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0, transition: 'all 0.2s',
-              animation: listening ? 'pulse 1.5s infinite' : undefined,
+              animation: (listening || transcribing) ? 'pulse 1.5s infinite' : undefined,
             }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

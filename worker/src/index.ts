@@ -2001,6 +2001,7 @@ async function ensureMigrations(db: D1Database): Promise<void> {
 const RATE_LIMITS: Record<string, { max: number; windowSec: number }> = {
   '/api/chat': { max: 30, windowSec: 60 },
   '/api/upload': { max: 10, windowSec: 60 },
+  '/api/stt': { max: 10, windowSec: 60 },
   '/api/auth/generate': { max: 5, windowSec: 60 },
 };
 
@@ -2856,6 +2857,93 @@ export default {
           'INSERT INTO threads (id, companion_id, title, last_message_at) VALUES (?, ?, ?, datetime("now"))'
         ).bind(id, cid, title || 'New conversation').run();
         return json({ id, title });
+      }
+
+      // POST /api/threads/:id/branch — create an independent snapshot from
+      // the first message through a chosen point. Fresh message IDs keep edits,
+      // reactions, and deletes in either branch from affecting the other.
+      if (path.match(/^\/api\/threads\/[^/]+\/branch$/) && request.method === 'POST') {
+        const cid = getCompanionId(request);
+        const sourceThreadId = path.split('/')[3];
+        const body = await request.json().catch(() => ({})) as { messageId?: string };
+        if (typeof body.messageId !== 'string' || !body.messageId.trim()) {
+          return json({ error: 'messageId required' }, 400);
+        }
+
+        const source = await env.DB.prepare(
+          `SELECT companion_id, title, ephemeral, summary, summary_upto, summary_msg_count
+           FROM threads WHERE id = ?`
+        ).bind(sourceThreadId).first<{
+          companion_id: number;
+          title: string | null;
+          ephemeral: number;
+          summary: string | null;
+          summary_upto: string | null;
+          summary_msg_count: number | null;
+        }>();
+        if (!source) return json({ error: 'thread not found' }, 404);
+        if (source.companion_id !== cid) return json({ error: 'thread belongs to a different companion' }, 403);
+
+        // rowid disambiguates messages inserted in the same SQLite second.
+        const boundary = await env.DB.prepare(
+          'SELECT rowid AS row_order, created_at FROM messages WHERE id = ? AND thread_id = ?'
+        ).bind(body.messageId.trim(), sourceThreadId).first<{ row_order: number; created_at: string }>();
+        if (!boundary) return json({ error: 'branch message not found in thread' }, 404);
+
+        const prefix = await env.DB.prepare(
+          `SELECT role, content, model, reactions, created_at
+           FROM messages
+           WHERE thread_id = ?
+             AND (created_at < ? OR (created_at = ? AND rowid <= ?))
+           ORDER BY created_at ASC, rowid ASC`
+        ).bind(sourceThreadId, boundary.created_at, boundary.created_at, boundary.row_order).all<{
+          role: string;
+          content: string;
+          model: string | null;
+          reactions: string | null;
+          created_at: string;
+        }>();
+        const rows = prefix.results || [];
+        if (rows.length === 0) return json({ error: 'nothing to branch' }, 400);
+
+        const newThreadId = crypto.randomUUID();
+        const baseTitle = (source.title || 'Conversation').replace(/\s+— branch(?: \d+)?$/i, '').trim();
+        const title = `${baseTitle || 'Conversation'} — branch`.slice(0, 200);
+
+        // Never carry a compaction digest into a branch that ends before the
+        // digest cutoff; that would leak later source-thread context.
+        const keepSummary = !!(
+          source.summary && source.summary_upto &&
+          boundary.created_at >= source.summary_upto
+        );
+        const statements = [
+          env.DB.prepare(
+            `INSERT INTO threads
+             (id, companion_id, title, ephemeral, last_message_at, summary, summary_upto, summary_msg_count)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            newThreadId, cid, title, source.ephemeral ? 1 : 0, boundary.created_at,
+            keepSummary ? source.summary : null,
+            keepSummary ? source.summary_upto : null,
+            keepSummary ? (source.summary_msg_count || 0) : 0,
+          ),
+          ...rows.map((row) => env.DB.prepare(
+            `INSERT INTO messages (id, thread_id, role, content, model, reactions, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            crypto.randomUUID(), newThreadId, row.role, row.content,
+            row.model, row.reactions, row.created_at,
+          )),
+        ];
+        await env.DB.batch(statements);
+
+        return json({
+          id: newThreadId,
+          title,
+          ephemeral: source.ephemeral ? 1 : 0,
+          copied_messages: rows.length,
+          branched_from_message_id: body.messageId.trim(),
+        }, 201);
       }
 
       // GET /api/threads/:id/context — what the model ACTUALLY receives for this
@@ -3867,6 +3955,90 @@ export default {
           cursor = list.truncated ? list.cursor : undefined;
         } while (cursor);
         return json({ success: true, deleted });
+      }
+
+      // ---- Optional Attune speech-to-text ----
+      // Attune is discovered from the user's own MCP settings; Haven ships no
+      // shared endpoint or credential. A token may be stored in the API-key
+      // field or in Attune's documented `?k=` MCP URL.
+      if (path === '/api/stt/status' && request.method === 'GET') {
+        const attune = await env.DB.prepare(
+          `SELECT url, api_key FROM mcp_servers
+           WHERE enabled = 1
+             AND (LOWER(name) LIKE '%attune%' OR LOWER(url) LIKE '%attune%')
+           ORDER BY id DESC LIMIT 1`
+        ).first<{ url: string; api_key: string | null }>();
+        let configured = !!attune?.api_key?.trim();
+        if (!configured && attune?.url) {
+          try { configured = !!new URL(attune.url).searchParams.get('k')?.trim(); } catch { /* Invalid URL. */ }
+        }
+        return json({ attune: configured });
+      }
+
+      if (path === '/api/stt' && request.method === 'POST') {
+        const formData = await request.formData();
+        const audioEntry = formData.get('audio');
+        if (!audioEntry || typeof audioEntry === 'string') {
+          return json({ error: 'No audio provided' }, 400);
+        }
+        const audio = audioEntry as File;
+        if (!audio.type.startsWith('audio/')) return json({ error: 'Audio file required' }, 415);
+        if (audio.size > 10 * 1024 * 1024) {
+          return json({ error: 'Voice note too large (max 10MB)' }, 413);
+        }
+
+        const attune = await env.DB.prepare(
+          `SELECT url, api_key FROM mcp_servers
+           WHERE enabled = 1
+             AND (LOWER(name) LIKE '%attune%' OR LOWER(url) LIKE '%attune%')
+           ORDER BY id DESC LIMIT 1`
+        ).first<{ url: string; api_key: string | null }>();
+        if (!attune?.url) return json({ error: 'Attune is not connected in Haven Settings' }, 503);
+
+        let target: URL;
+        try {
+          target = new URL(attune.url);
+        } catch {
+          return json({ error: 'Attune has an invalid server URL' }, 503);
+        }
+        const token = attune.api_key?.trim() || target.searchParams.get('k')?.trim();
+        if (!token) return json({ error: 'Attune needs its bearer token in the API key field or ?k= URL' }, 503);
+
+        const normalizedPath = target.pathname.replace(/\/$/, '');
+        target.pathname = normalizedPath === '/mcp'
+          ? '/api/transcribe'
+          : normalizedPath.replace(/\/mcp$/, '/transcribe');
+        target.search = '';
+
+        const upstreamForm = new FormData();
+        upstreamForm.append('audio', audio, audio.name || 'voice-note.webm');
+        const language = formData.get('language');
+        if (typeof language === 'string' && language.trim()) {
+          upstreamForm.append('language', language.trim().slice(0, 20));
+        }
+
+        let upstream: Response;
+        try {
+          upstream = await fetch(target, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: upstreamForm,
+          });
+        } catch {
+          return json({ error: 'Attune transcription is unavailable' }, 502);
+        }
+        const result = await upstream.json().catch(() => null) as Record<string, unknown> | null;
+        if (!upstream.ok) {
+          const message = typeof result?.error === 'string'
+            ? result.error
+            : typeof result?.detail === 'string' ? result.detail : 'Attune transcription failed';
+          return json({ error: message }, upstream.status);
+        }
+        return json({
+          transcript: typeof result?.transcript === 'string' ? result.transcript : '',
+          stt_skipped: result?.stt_skipped === true,
+          stt_partial: result?.stt_partial === true,
+        });
       }
 
       // ---- File Upload (R2) ----

@@ -92,6 +92,7 @@ interface MessageBubbleProps {
   onReact?: (messageId: string, emoji: string) => void;
   onDelete?: (messageId: string) => void;
   onRegenerate?: (messageId: string) => void;
+  onBranch?: (messageId: string) => void;
   onRevertFile?: (file: string) => void;
 }
 
@@ -450,7 +451,7 @@ function renderContentParts(parts: ContentPart[], keyPrefix: string, onRevertFil
   });
 }
 
-export default function MessageBubble({ message, isStreaming, fontSize = 15, fontFamily, textColor, companionAvatar, onEdit, onReact, onDelete, onRegenerate, onRevertFile }: MessageBubbleProps) {
+export default function MessageBubble({ message, isStreaming, fontSize = 15, fontFamily, textColor, companionAvatar, onEdit, onReact, onDelete, onRegenerate, onBranch, onRevertFile }: MessageBubbleProps) {
   const [showActions, setShowActions] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
@@ -871,6 +872,14 @@ export default function MessageBubble({ message, isStreaming, fontSize = 15, fon
                 onClick={() => navigator.clipboard.writeText(message.content)}
                 style={{ fontSize: '12px', background: 'var(--haven-surface)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '2px 8px', cursor: 'pointer', color: 'var(--haven-text-secondary)' }}
               >📋</button>
+            )}
+            {onBranch && (
+              <button
+                onClick={() => { setShowActions(false); onBranch(message.id); }}
+                title="Branch conversation from here"
+                aria-label="Branch conversation from here"
+                style={{ fontSize: '12px', background: 'var(--haven-surface)', border: '1px solid var(--haven-border)', borderRadius: '8px', padding: '2px 8px', cursor: 'pointer', color: 'var(--haven-text-secondary)' }}
+              >⑂ Branch</button>
             )}
             {onDelete && (
               <button

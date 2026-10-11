@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v2.0.0-D4A84B?style=flat-square" alt="Release" />
+  <img src="https://img.shields.io/badge/release-v2.1.0-D4A84B?style=flat-square" alt="Release" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-4CC552?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/providers-9+-6C8EBF?style=flat-square" alt="Providers" />
   <img src="https://img.shields.io/badge/built%20with-Cloudflare-F6821F?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare" />
@@ -90,6 +90,7 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 
 ### Remember
 - **Conversation threads** — start new ones anytime, pick up old ones where you left off
+- **Branch from any message** — fork everything through a chosen point into a separate thread. The original stays untouched, and each branch can evolve independently.
 - **Companion identity** — who they are loads on every conversation. Personality, voice, values, boundaries. You bring the character, Haven keeps it consistent
 - Full **export and backup** of everything — threads, messages, identity. Your data, portable, always
 
@@ -100,7 +101,7 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 
 ### Feel real
 - **Multi-provider TTS** — ElevenLabs, Hume, Groq, Kokoro (local), browser voices, or Cloud TTS via Workers AI. Pick what sounds right.
-- **Speech-to-text** — talk to them with your voice. Uses your browser's native Web Speech Recognition API, so there's no API key to configure. Tap the mic, grant permission once, start talking; tap again to stop. Works in **Chrome, Edge, Safari, and most Chromium-based browsers** (including the Android PWA + WebView, where it hands off to Google's on-device recognizer). **Firefox does not support it** — in Firefox the mic button will tell you so rather than silently fail. Quality is "good enough to capture a sentence" — accents and fast speech can fumble — but since it's free and built in, it's there when you want it.
+- **Speech-to-text** — talk to them with your voice. Haven uses a connected [Attune](https://github.com/amarisaster/Attune) server when available, including in the Android app; otherwise it falls back to your browser's native Web Speech Recognition API.
 - **Message reactions** — frequent-use emoji bar that learns what you use most, plus a "+" button for any emoji. Reactions persist across reloads.
 - **GIF search** — built-in GIPHY picker. GIFs render inline as animated images, not URLs
 - **Custom stickers** — upload your own stickers, stored locally in IndexedDB
@@ -119,6 +120,16 @@ It runs on Cloudflare's free tier (yes, actually free), connects to whatever AI 
 - Tool discovery — Haven finds available tools and passes them to the model via function calling
 - Your companion can now store memories, update emotional state, control Spotify, send Discord messages — whatever tools you connect
 - **Scales to real setups** — tested against a Nexus gateway aggregating **137 tools** across 5 companions' CogCor + Discord + Spotify + Notion + biometrics. Haven absorbs it all.
+
+#### Optional: use Attune for speech-to-text
+
+[Attune](https://github.com/amarisaster/Attune) is a self-hosted voice-analysis and transcription service. Once your Attune instance is running, add it in **Settings → MCP Servers**:
+
+1. Name the server **Attune**.
+2. Enter Attune's documented connector URL: `https://your-attune-host/mcp?k=<your-token>`.
+3. Enable the server and press **Test**.
+
+Haven then routes microphone recordings through your own Attune server automatically. Without Attune, the existing browser speech recognizer remains available. Voice clips are limited to 10 MB and pass through your Haven Worker only to the Attune instance you configured; Haven does not include a shared Attune service or credential.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/amarisaster/Haven/main/screenshots/providers-mcp.png" width="60%" alt="Haven Settings showing OpenRouter + Ollama + Hugging Face connected, Nexus MCP server with tools discovered, and chat customization" />
@@ -306,7 +317,7 @@ You can also paste or upload **JSON character cards** during setup. Haven parses
 - **Frontend**: React + Vite + TypeScript
 - **Backend**: Cloudflare Workers + D1 (SQLite) + R2 (file storage)
 - **TTS**: ElevenLabs, Hume, Groq, Kokoro, Cloud (Workers AI), Browser
-- **STT**: Web Speech Recognition API
+- **STT**: Attune (optional, self-hosted) or Web Speech Recognition API fallback
 - **Deploy**: Cloudflare Pages (frontend) + Workers (backend)
 - **Cost**: Free tier covers personal use
 
@@ -321,7 +332,7 @@ Yes. Cloudflare's free tier handles Workers, D1, R2, and Pages for personal use.
 Yes. Haven has a native **Android app** — download the APK from the [latest release](https://github.com/amarisaster/Haven/releases). It also works as a PWA in any mobile browser.
 
 **Is my data private?**
-Your data lives on your own Cloudflare account. Haven has no analytics, no tracking, no external calls except to your chosen AI provider.
+Your data lives on your own Cloudflare account. Haven has no analytics or tracking. It only calls the AI providers, MCP servers, and optional services you explicitly configure.
 
 **Can I have multiple companions?**
 Yes — v1.7 added full multi-companion support. Each companion has their own identity, memories, threads, and project files, fully sandboxed from each other. Settings (MCP servers, API keys, provider config) stays global. Up to 10 companions per Haven instance.
@@ -513,6 +524,12 @@ You need to seed the schema before deploying. Run: `wrangler d1 execute haven-db
 ---
 
 ## Recent updates
+
+**v2.1.0** — Thread Branching + Optional Attune STT
+- **Branch from any message** — tap a saved message and choose **⑂ Branch** to copy the conversation through that point into a new, independent thread. The source is never edited.
+- **Safe compacted branches** — valid earlier summaries are preserved, while summaries that include later messages are deliberately dropped so future context cannot leak backward into the branch.
+- **Attune microphone integration** — connect a self-hosted [Attune](https://github.com/amarisaster/Attune) MCP server and Haven automatically uses it for speech-to-text, with browser recognition retained as the fallback.
+- **Android version bump** to `2.1.0`.
 
 **v2.0.0** — Code together (Codex bridge)
 - **Codex as a provider** — pick *Codex (your PC)* in the model selector and your companion runs through the Codex CLI on your own machine, billed to your own ChatGPT subscription. Optional per-model entries via the `codex_models` setting.

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, ToolCallRecord, StreamEvent } from '../lib/types';
 import type { ModelInfo } from '../lib/types';
-import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId, getCodexRunContext, persistCodexMessage, uploadFile, setThreadEphemeral, getThreadContext, compactThread, type ThreadContext } from '../lib/api';
+import { getMessages, sendChat, getCompanionStatus, getUserStatus, deleteMessage, reactMessage, pushPreference, getModels, activeCompanionId, getCodexRunContext, persistCodexMessage, uploadFile, setThreadEphemeral, getThreadContext, compactThread, branchThread, type ThreadContext } from '../lib/api';
 import { sendChatCodex, setCodexProviderActive, subscribeCodexPresence } from '../lib/codex-ws';
 import { notifyCompanionMessage } from '../lib/notifications';
 import { getWallpaper as loadWallpaper, setWallpaper as saveWallpaper } from '../lib/wallpaper-store';
@@ -457,6 +457,17 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
     }
   }, []);
 
+  const handleBranchMessage = useCallback(async (messageId: string) => {
+    if (!threadId || streamingContent !== null || messageId.startsWith('temp-') || messageId.startsWith('comp-')) return;
+    setError(null);
+    try {
+      const branched = await branchThread(threadId, messageId);
+      onThreadCreated(branched.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not branch this conversation');
+    }
+  }, [threadId, streamingContent, onThreadCreated]);
+
   const handleRevertFile = useCallback(async (file: string) => {
     if (!threadId || streamingContent !== null) return;
     setError(null);
@@ -804,6 +815,7 @@ export default function ChatContainer({ threadId, onThreadCreated, companionName
         onReactMessage={handleReactMessage}
         onDeleteMessage={handleDeleteMessage}
         onRegenerateMessage={handleRegenerateMessage}
+        onBranchMessage={handleBranchMessage}
         onRevertFile={handleRevertFile}
       />
 

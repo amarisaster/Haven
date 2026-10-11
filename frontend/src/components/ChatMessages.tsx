@@ -14,6 +14,7 @@ interface ChatMessagesProps {
   onReactMessage: (messageId: string, emoji: string) => void;
   onDeleteMessage?: (messageId: string) => void;
   onRegenerateMessage?: (messageId: string) => void;
+  onBranchMessage?: (messageId: string) => void;
   onRevertFile?: (file: string) => void;
 }
 
@@ -63,6 +64,7 @@ export default function ChatMessages({
   onReactMessage,
   onDeleteMessage,
   onRegenerateMessage,
+  onBranchMessage,
   onRevertFile,
 }: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -169,6 +171,7 @@ export default function ChatMessages({
           onReact={onReactMessage}
           onDelete={onDeleteMessage}
           onRegenerate={onRegenerateMessage}
+          onBranch={onBranchMessage}
           onRevertFile={onRevertFile}
         />
       ))}
