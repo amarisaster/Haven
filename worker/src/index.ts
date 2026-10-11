@@ -871,6 +871,147 @@ async function inferenceWithTools(
   };
 }
 
+// Ollama's native /api/chat endpoint supports streaming and function calls in
+// the same response. The generic tool path buffers the whole reply, which can
+// make larger Ollama Cloud models appear frozen even when no tool is called.
+async function inferenceWithToolsStreamingOllama(
+  messages: Array<{ role: string; content: any }>,
+  model: string,
+  env: Env,
+  tools: McpTool[],
+  companionId: number,
+  onChunk: (content: string) => void,
+  thinking = false,
+  temperature?: number,
+  webSearch = false,
+): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
+  const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS, ...(webSearch ? [WEB_SEARCH_TOOL] : [])];
+  const toolLookup = new Map(tools.map(t => [t.name, t]));
+  const resolved = await resolveProviderConfig('ollama', env.DB, env);
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (resolved.key) headers.Authorization = `Bearer ${resolved.key}`;
+
+  const seeded = [...messages];
+  if (thinking && seeded.length > 0 && seeded[0].role === 'system') {
+    seeded[0] = {
+      ...seeded[0],
+      content: seeded[0].content + '\n\nThink through your reasoning step by step inside <think> tags before giving your response. Example:\n<think>\n[your reasoning here]\n</think>\n[your response here]',
+    };
+  }
+  const conversation: any[] = normalizeMessagesForOllama(seeded);
+  const allToolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }> = [];
+  const usage: UsageSink = {};
+  let fullContent = '';
+  const MAX_ITERATIONS = 5;
+
+  for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+    const resp = await fetch(`${resolved.url}/api/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: conversation,
+        tools: openaiTools,
+        tool_choice: 'auto',
+        think: thinking,
+        options: { temperature: temperature ?? 0.8 },
+        stream: true,
+      }),
+    });
+    if (!resp.ok || !resp.body) {
+      const errText = await resp.text().catch(() => '');
+      throw new Error(`Inference error ${resp.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let iterationContent = '';
+    const requestedTools: any[] = [];
+
+    const consume = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let data: any;
+      try { data = JSON.parse(trimmed); } catch { return; }
+
+      const token = data?.message?.content;
+      if (typeof token === 'string' && token) {
+        iterationContent += token;
+        fullContent += token;
+        onChunk(token);
+      }
+      if (Array.isArray(data?.message?.tool_calls)) requestedTools.push(...data.message.tool_calls);
+      if (data?.prompt_eval_count != null || data?.eval_count != null) {
+        usage.input = (usage.input || 0) + (data.prompt_eval_count || 0);
+        usage.output = (usage.output || 0) + (data.eval_count || 0);
+        usage.exact = true;
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) consume(line);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) consume(buffer);
+
+    if (requestedTools.length === 0) {
+      if (iterationContent.trim()) return { content: fullContent, toolResults: allToolResults, usage };
+      break;
+    }
+
+    const normalizedCalls = requestedTools.map((tc, index) => ({
+      ...tc,
+      id: tc.id || `call_${iteration}_${index}`,
+    }));
+    conversation.push({ role: 'assistant', content: iterationContent, tool_calls: normalizedCalls });
+
+    for (const tc of normalizedCalls) {
+      const fn = tc.function || {};
+      const name = typeof fn.name === 'string' ? fn.name : '';
+      let args: any = {};
+      let result = `Unknown tool: ${name}`;
+      let ok = false;
+      let server: string | undefined;
+      try {
+        args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments || '{}') : (fn.arguments ?? {});
+        if (NATIVE_TOOL_NAMES.has(name)) {
+          result = await executeNativeTool(name, args, env.DB, companionId);
+          ok = !result.startsWith('Unknown') && !result.startsWith('Tool error');
+          server = 'haven';
+        } else {
+          const toolInfo = toolLookup.get(name);
+          if (toolInfo) {
+            server = toolInfo.server_url;
+            result = await executeMcpTool(toolInfo.server_url, toolInfo.server_key, name, args, toolInfo.transport || 'streamable');
+            ok = !result.startsWith('Tool error');
+          }
+        }
+      } catch (e) {
+        result = `Tool error: ${e}`;
+      }
+      allToolResults.push({ name, arguments: args, result, server, ok });
+      conversation.push({ role: 'tool', content: result, tool_call_id: tc.id, tool_name: name });
+    }
+  }
+
+  const nudge = { role: 'user', content: 'Please respond to the user now with a direct message. Do not call any more tools.' };
+  for await (const token of streamInference([...conversation, nudge], model, 'ollama', env, thinking, temperature, false, undefined, usage)) {
+    fullContent += token;
+    onChunk(token);
+  }
+  return {
+    content: fullContent || `(Hit tool-call limit without a text reply. Called: ${allToolResults.map(r => r.name).join(', ') || 'nothing recognized'}.)`,
+    toolResults: allToolResults,
+    usage,
+  };
+}
+
 // ============================================================
 // Proactive memory — background extraction + consolidation
 // ============================================================
@@ -1751,7 +1892,13 @@ async function* streamInference(
     response = await fetch(nativeUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model, messages: requestMsgs, stream: true }),
+      body: JSON.stringify({
+        model,
+        messages: requestMsgs,
+        stream: true,
+        think: thinking,
+        options: { temperature: temperature ?? 0.8 },
+      }),
     });
     if (response.ok) {
       useNativeOllama = true;
@@ -2620,12 +2767,26 @@ export default {
               // native. Only fall through to plain streaming when truly none
               // exist (e.g., someone ripped NATIVE_TOOLS out).
               if (mcpTools.length > 0 || NATIVE_TOOLS.length > 0 || webSearch) {
-                // Non-streaming path with function calling
+                // Ollama streams prose and tool calls together. Other
+                // providers retain the established buffered tool path.
                 try {
-                  const toolResult = await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache, cfgCacheTtl, webSearch);
-                  fullResponse = toolResult.content;
+                  const toolResult = provider === 'ollama'
+                    ? await inferenceWithToolsStreamingOllama(
+                        chatMessages, model, env, mcpTools, chatCompanionId,
+                        (content) => {
+                          fullResponse += content;
+                          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`));
+                        },
+                        thinking, cfgTemperature, webSearch,
+                      )
+                    : await inferenceWithTools(chatMessages, model, provider, env, mcpTools, chatCompanionId, thinking, cfgTemperature, cfgCache, cfgCacheTtl, webSearch);
+                  if (provider !== 'ollama') {
+                    fullResponse = toolResult.content;
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
+                  } else {
+                    fullResponse = toolResult.content;
+                  }
                   Object.assign(chatUsage, toolResult.usage);
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: fullResponse })}\n\n`));
                   if (toolResult.toolResults.length > 0) {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tools', results: toolResult.toolResults })}\n\n`));
                   }
