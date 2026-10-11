@@ -58,6 +58,20 @@ jobs:
           bucket_name = "$R2_BUCKET_NAME"
           TOML
           fi
+
+          # The Codex bridge is implemented by a Durable Object. Keep this in
+          # the generated config or a CI deploy silently removes the binding
+          # from an otherwise healthy Haven Worker.
+          cat >> wrangler.toml << 'TOML'
+
+          [[durable_objects.bindings]]
+          name = "CODEX_RELAY"
+          class_name = "CodexRelay"
+
+          [[migrations]]
+          tag = "v1"
+          new_sqlite_classes = ["CodexRelay"]
+          TOML
         env:
           CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
