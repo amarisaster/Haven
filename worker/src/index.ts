@@ -661,7 +661,7 @@ async function inferenceWithTools(
   cache = false,
   cacheTtl?: string,
   webSearch = false,
-): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
+): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink; interrupted?: boolean }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
   // whether the name is in NATIVE_TOOL_NAMES. web_search is only advertised
@@ -903,23 +903,44 @@ async function inferenceWithToolsStreamingOllama(
   const usage: UsageSink = {};
   let fullContent = '';
   const MAX_ITERATIONS = 5;
+  const MAX_CONTINUATIONS = 2;
+  let continuationCount = 0;
+  let interrupted = false;
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-    const resp = await fetch(`${resolved.url}/api/chat`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: conversation,
-        tools: openaiTools,
-        tool_choice: 'auto',
-        think: thinking,
-        options: { temperature: temperature ?? 0.8 },
-        stream: true,
-      }),
-    });
+    let resp: Response;
+    try {
+      resp = await fetch(`${resolved.url}/api/chat`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          messages: conversation,
+          tools: openaiTools,
+          tool_choice: 'auto',
+          think: thinking,
+          options: { temperature: temperature ?? 0.8 },
+          stream: true,
+        }),
+      });
+    } catch (e) {
+      // A continuation is best-effort. If the provider disappears after we
+      // already received prose, keep that prose so the chat turn is durable
+      // instead of throwing it away at the outer request boundary.
+      if (fullContent.trim()) {
+        console.log(`[CHAT] Ollama continuation request failed after partial response: ${String(e)}`);
+        interrupted = true;
+        break;
+      }
+      throw e;
+    }
     if (!resp.ok || !resp.body) {
       const errText = await resp.text().catch(() => '');
+      if (fullContent.trim()) {
+        console.log(`[CHAT] Ollama continuation returned ${resp.status} after partial response`);
+        interrupted = true;
+        break;
+      }
       throw new Error(`Inference error ${resp.status}: ${errText.slice(0, 200)}`);
     }
 
@@ -928,12 +949,23 @@ async function inferenceWithToolsStreamingOllama(
     let buffer = '';
     let iterationContent = '';
     const requestedTools: any[] = [];
+    let sawDone = false;
+    let doneReason = '';
+    let streamReadError: unknown = null;
 
     const consume = (line: string) => {
       const trimmed = line.trim();
       if (!trimmed) return;
       let data: any;
       try { data = JSON.parse(trimmed); } catch { return; }
+
+      if (data?.done === true) {
+        sawDone = true;
+        doneReason = typeof data.done_reason === 'string' ? data.done_reason : '';
+      }
+      if (data?.error) {
+        streamReadError = new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+      }
 
       const token = data?.message?.content;
       if (typeof token === 'string' && token) {
@@ -949,19 +981,42 @@ async function inferenceWithToolsStreamingOllama(
       }
     };
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) consume(line);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) consume(line);
+      }
+    } catch (e) {
+      streamReadError = e;
     }
     buffer += decoder.decode();
     if (buffer.trim()) consume(buffer);
 
+    if (streamReadError && !iterationContent.trim() && !fullContent.trim()) {
+      throw streamReadError;
+    }
+
     if (requestedTools.length === 0) {
-      if (iterationContent.trim()) return { content: fullContent, toolResults: allToolResults, usage };
+      if (iterationContent.trim()) {
+        const hitOutputLimit = sawDone && /length|limit|max_tokens|num_predict/i.test(doneReason);
+        const endedUnexpectedly = !sawDone || !!streamReadError;
+        if ((hitOutputLimit || endedUnexpectedly) && continuationCount < MAX_CONTINUATIONS) {
+          continuationCount++;
+          console.log(`[CHAT] resuming interrupted Ollama reply (${doneReason || 'stream ended before done'}, attempt ${continuationCount})`);
+          conversation.push({ role: 'assistant', content: iterationContent });
+          conversation.push({
+            role: 'user',
+            content: 'Continue exactly where your previous response stopped. Do not restart, summarize, or repeat any text. Finish the response naturally.',
+          });
+          continue;
+        }
+        interrupted = hitOutputLimit || endedUnexpectedly;
+        break;
+      }
       break;
     }
 
@@ -1009,6 +1064,7 @@ async function inferenceWithToolsStreamingOllama(
     content: fullContent || `(Hit tool-call limit without a text reply. Called: ${allToolResults.map(r => r.name).join(', ') || 'nothing recognized'}.)`,
     toolResults: allToolResults,
     usage,
+    ...(interrupted ? { interrupted: true } : {}),
   };
 }
 
@@ -2787,6 +2843,12 @@ export default {
                     fullResponse = toolResult.content;
                   }
                   Object.assign(chatUsage, toolResult.usage);
+                  if ('interrupted' in toolResult && toolResult.interrupted) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'notice',
+                      message: 'The provider interrupted this reply after two automatic resume attempts. Haven saved everything received instead of losing the turn.',
+                    })}\n\n`));
+                  }
                   if (toolResult.toolResults.length > 0) {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'tools', results: toolResult.toolResults })}\n\n`));
                   }
@@ -2811,9 +2873,16 @@ export default {
                     notice += `Provider error: ${errStr.slice(0, 200)}`;
                   }
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'notice', message: notice })}\n\n`));
-                  for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl, chatUsage)) {
-                    fullResponse += token;
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
+                  // Once prose has reached the screen, starting a brand-new
+                  // fallback request duplicates its opening and can fail a
+                  // second time, after which the old handler deleted the turn.
+                  // Preserve the received prose and let the normal persistence
+                  // path save it. Plain fallback is only safe before any chunk.
+                  if (!fullResponse.trim()) {
+                    for await (const token of streamInference(chatMessages, model, provider, env, thinking, cfgTemperature, cfgCache, cfgCacheTtl, chatUsage)) {
+                      fullResponse += token;
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'chunk', content: token })}\n\n`));
+                    }
                   }
                 }
               } else {
