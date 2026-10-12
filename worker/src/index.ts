@@ -661,7 +661,7 @@ async function inferenceWithTools(
   cache = false,
   cacheTtl?: string,
   webSearch = false,
-): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink; interrupted?: boolean }> {
+): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
   // Combine MCP tool schemas with Haven-native ones (update_my_status, etc.)
   // so the model sees them as a unified toolbox. Execution branches later on
   // whether the name is in NATIVE_TOOL_NAMES. web_search is only advertised
@@ -884,7 +884,7 @@ async function inferenceWithToolsStreamingOllama(
   thinking = false,
   temperature?: number,
   webSearch = false,
-): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink }> {
+): Promise<{ content: string; toolResults: Array<{ name: string; arguments?: any; result: string; server?: string; ok: boolean }>; usage: UsageSink; interrupted?: boolean }> {
   const openaiTools = [...mcpToolsToOpenAI(tools), ...NATIVE_TOOLS, ...(webSearch ? [WEB_SEARCH_TOOL] : [])];
   const toolLookup = new Map(tools.map(t => [t.name, t]));
   const resolved = await resolveProviderConfig('ollama', env.DB, env);
